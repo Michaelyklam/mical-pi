@@ -32,21 +32,49 @@ jobs:
       - name: Pull updates for each external skill
         id: sync
         run: |
+          tmp_root=$(mktemp -d)
           changed=""
           for entry in $(jq -c '.[]' .github/skill-sources.json); do
             name=$(echo "$entry" | jq -r '.name')
             repo=$(echo "$entry" | jq -r '.repo')
             branch_ref=$(echo "$entry" | jq -r '.branch')
-            echo "Syncing $name from $repo@$branch_ref"
+            subpath=$(echo "$entry" | jq -r '.subpath // ""')
             before=$(git rev-parse HEAD)
-            if git subtree pull --prefix="$name" "$repo" "$branch_ref" --squash -m "chore(sync): update $name from upstream"; then
-              after=$(git rev-parse HEAD)
-              if [ "$before" != "$after" ]; then
-                changed="$changed $name"
+
+            if [ -z "$subpath" ]; then
+              # Skill lives at the repo root - pull directly.
+              echo "Syncing $name from $repo@$branch_ref (root)"
+              if ! git subtree pull --prefix="$name" "$repo" "$branch_ref" --squash -m "chore(sync): update $name from upstream"; then
+                echo "::warning::subtree pull failed for $name, skipping"
+                git merge --abort 2>/dev/null || true
+                continue
               fi
             else
-              echo "::warning::subtree pull failed for $name, skipping"
-              git merge --abort 2>/dev/null || true
+              # Skill is nested inside a subfolder of a larger repo - clone once per
+              # repo, re-extract just that subfolder's history, then pull from it.
+              echo "Syncing $name from $repo@$branch_ref ($subpath)"
+              clone_key=$(echo "$repo" | md5sum | cut -d' ' -f1)
+              clone_dir="$tmp_root/$clone_key"
+              if [ ! -d "$clone_dir" ]; then
+                git clone --quiet "$repo" "$clone_dir"
+              else
+                (cd "$clone_dir" && git fetch --quiet origin "$branch_ref")
+              fi
+              split_branch="split-$name"
+              if ! (cd "$clone_dir" && git checkout --quiet "$branch_ref" && git branch -D "$split_branch" 2>/dev/null; git subtree split --prefix="$subpath" -b "$split_branch" "$branch_ref"); then
+                echo "::warning::subtree split failed for $name, skipping"
+                continue
+              fi
+              if ! git subtree pull --prefix="$name" "$clone_dir" "$split_branch" --squash -m "chore(sync): update $name from upstream ($subpath)"; then
+                echo "::warning::subtree pull failed for $name, skipping"
+                git merge --abort 2>/dev/null || true
+                continue
+              fi
+            fi
+
+            after=$(git rev-parse HEAD)
+            if [ "$before" != "$after" ]; then
+              changed="$changed $name"
             fi
           done
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
