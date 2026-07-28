@@ -6,41 +6,42 @@ description: |
 
 # Write Like Me
 
-A voice guide built by sampling ~130 files across seven sections of Michael's Obsidian vault (`~/Documents/Obsidian` — the live, currently-synced copy; ignore the stale `Obsidian-vault` copy and any `*.sync-conflict-*` files if reading the vault directly). This is about **craft**, not topic — how he actually puts sentences together, not what he writes about.
+Built from ~130 sampled files across `~/Documents/Obsidian` (the live, synced vault — ignore the stale `Obsidian-vault` copy and any `*.sync-conflict-*` files). This is about **craft**, not topic.
 
-## How to use this
+## The one thing that matters most: which register is this?
 
-1. Figure out which genre the target content is closest to, using the table below.
-2. Read that genre's reference file for its structure, formatting habits, and verbatim calibration quotes.
-3. Apply the **Voice DNA** below regardless of genre — these traits show up everywhere.
-4. Draft the content, then sanity-check it against the genre file's checklist before handing it back.
+Everything else below falls out of this split. Figure out which side the target content is on before anything else.
 
-If the request doesn't fit any row cleanly, pick the closest match and say which one you picked — don't silently guess.
+**Reflective** (Journal, Faith, Books, Entertainment) — first person, hedged, thinking out loud:
+- Constant hedging: "I think," "maybe," "to be seen," "I wonder if" — commits to a take while leaving room to revise it. Don't flatten into false confidence.
+- Calibrates by comparison, not absolute judgment: to other days, other books, other shows/scores.
+- Genuine rhetorical questions drive the reasoning, sometimes left unresolved.
+- When it does conclude something, it distills to an itemized form — a lessons-learned list, a "lie → truth" pairing — rather than staying in flowing prose.
+- Trails off at the end. No "in conclusion," no wrap-up restatement.
 
-| Drafting... | Reference | Register |
-|---|---|---|
-| Journal entry, personal story, trip recap | [JOURNAL.md](JOURNAL.md) | informal, storytelling |
-| Bible study, sermon notes, faith reflection | [FAITH.md](FAITH.md) | explanatory, teacherly-then-personal |
-| Recipe / cooking instructions | [RECIPES.md](RECIPES.md) | instructional, technical |
-| Book notes / reaction to a book | [BOOKS.md](BOOKS.md) | reflective, agree-or-disagree |
-| Movie / show / music reaction | [ENTERTAINMENT.md](ENTERTAINMENT.md) | casual, enthusiastic, comparative |
-| Self-improvement or communication framework | [PERSONAL.md](PERSONAL.md) | pragmatic, coaching-himself |
-| Work reflection, self-eval, career note | [WORK.md](WORK.md) | professional-reflective |
+**Instructional** (Recipes, Personal, Work) — imperative/second-person, much less hedging:
+- Tells you what to do, not what he's thinking about doing.
+- Distills to enumerated or punchy parallel-structure lines ("Steer don't follow"), a numbered recap after a process, or a tip called out as its own line — not paragraphs of reasoning.
+- Still conversational and often unpolished (comma splices, fragments) — this is not corporate-clean writing, just less hedged.
 
-**Not covered on purpose:** vault sections like People (CRM-style contact templates), Events (mostly tables), Projects/Ideas (specs), and Meetings (terse fragments) aren't prose in his voice — they're reference/structured notes. Don't pull from them as style sources. If new writing needs a mode not listed here, say so rather than forcing it into one of these seven.
+**True in both registers:** bold is only ever a structural label (`**Tip:**`, `**Passage:**`, `**Scope:**`) — never decorative emphasis. Wikilink-style cross-referencing to people/places/other notes is constant. Don't manufacture typos or broken grammar to seem authentic — match the looseness of construction (run-ons, fragments) without faking misspellings, and don't over-polish into brand-copy smoothness either.
 
-## Voice DNA (applies across every genre)
+## Genre quick reference
 
-- **First person, direct, present-thinking.** "I think," "I feel like," "I realized," "I wonder if." He narrates his own thought process rather than stating conclusions flatly.
-- **Conversational chaining, not subordination.** Clauses stack with "and," "so," "but," "because" rather than tight subordinate-clause grammar. Comma splices are the normal register here, not an error to silently fix.
-- **Hedging is a habit, not a weakness.** "Maybe," "I think," "to be seen," "I'm not sure if," "I might change my mind." He commits to a take while explicitly leaving room to revise it. Don't flatten this into false confidence.
-- **Calibrates by comparison.** Opinions are anchored against other known things ("similar to how X felt, but not as Y as Z") more often than described in the abstract.
-- **Cross-references liberally.** Heavy `[[wikilink]]`-style references to people, places, other notes/media when writing in Obsidian. Outside Obsidian, this becomes natural inline mentions/links, not footnotes.
-- **Bold is structural, never decorative.** Reserved for field labels (`**Tip:**`, `**Key Technique:**`, `**Passage:**`) — never for random mid-sentence emphasis. Italics are rare.
-- **Headers only when a piece earns them.** Short pieces are just paragraph breaks; longer ones get `###`/`####` headers matching whatever the content's own structure is (a book's chapters, a framework's steps, a passage's verses) — not a fixed generic template.
-- **Bullets for enumerable things, prose for reflection.** Steps, lessons-learned, and frameworks get lists; reactions and reasoning get paragraphs.
-- **Endings trail off rather than wrap up.** No "in conclusion." A piece ends on the last real thought, not a summary restatement.
-- **Deadpan, understated humor.** Delivered as a flat short statement, not a joke with a setup — "Never again." "Pretty mid." "Music was ok, nothing outstanding but it didn't suck either."
-- **Self-reflection is often itemized**, not flowing introspection — "lessons learned" as a literal list (Firstly... Second thing... Third thing...) rather than a meditative paragraph.
-- **Rhetorical questions are structural**, not decorative — he genuinely asks himself something mid-piece and sometimes leaves it open rather than resolving it.
-- **Don't manufacture typos or broken capitalization to seem "authentic."** The looseness (lowercase sentence starts, missing apostrophes, comma splices) is real in his raw notes, but deliberately inserting errors reads as mockery, not voice-matching. Match the *looseness of construction* — run-ons, fragments, informal register — without faking misspellings. The one thing worth actually keeping: don't over-polish into corporate-smooth phrasing. If a draft sounds like it could've been copy-edited by a brand style guide, it's drifted from his voice.
+| Genre | Register | Structural signature | Sounds like |
+|---|---|---|---|
+| **Journal** — personal story/recap | Reflective | Tag line, then prose; no fixed template beyond that; length swings from one line to 900 words depending on how eventful the day was | "it was pretty mid... Yea I probably wouldn't buy it for myself." |
+| **Faith** — Bible study/sermon/reflection | Reflective | Scripture quoted via `> [!bible]` blockquote; exposition (what the text means) and application (what it means for him) are separate sections, never blended sentence-by-sentence | "So I keep asking myself: is this prayer asking for fruit for my own use, or is it asking for what I can steward for His glory?" |
+| **Books** — reactions/notes | Reflective | Author's point stated in 1-2 sentences, then an explicit pivot ("But my perspective is...") into his own take; reframes through a faith lens when it fits, without forcing it | "I feel like I can really see the value... But we live in a fallen world, these things would always have a chance to be corrupted." |
+| **Entertainment** — movie/show/music | Reflective | Numeric rating with an actual one-line rationale for the specific number; comparison to other titles is the main calibration tool | "Music was ok, nothing outstanding but it didn't suck either." |
+| **Recipes** — cooking instructions | Instructional | Fixed order: About → Ingredients (checkboxes) → numbered Instructions → Tips/Storage → tags. Steps are one-clause imperatives; any warning/reasoning lives in its own `**Tip:**` sub-bullet, never inline in the step. Metric units, scalable quantities | "Remove from heat, let cool 30 seconds — **Tip:** This is the most important step — prevents scrambled eggs" |
+| **Personal** — self-improvement/communication frameworks | Instructional | Second-person imperative; boils down to a punchy parallel-structure line; numbered steps only if the framework genuinely has sequential stages | "Charisma is being able to let someone else feel like the main character." |
+| **Work** — career reflection/self-eval | Instructional | Headers mirror the actual prompt/process being answered; self-evals pair every acknowledged gap with a concrete next step; a short numbered recap closes a process-heavy section | "I understand there is still more to learn... I would like to work on..." |
+
+**Not covered on purpose:** People (CRM-style contact templates), Events (mostly tables), Projects/Ideas (specs), Meetings (terse fragments) — these are reference/structured notes, not prose in his voice. If a request needs a mode not in the table, say so rather than forcing it into one of these seven.
+
+## Before handing back a draft
+- [ ] Right register for the genre (hedged/reflective vs imperative/instructional) — not a blend of both
+- [ ] Bold used only as a label, if at all
+- [ ] Ends on the actual last thought/step — no forced wrap-up sentence (reflective) or unnecessary restatement (instructional)
+- [ ] Doesn't read like it could've been copy-edited by a brand style guide
