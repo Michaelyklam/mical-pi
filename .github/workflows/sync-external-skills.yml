@@ -1,0 +1,67 @@
+name: Sync External Skills
+
+on:
+  schedule:
+    - cron: '0 15 * * 1' # every Monday 15:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create sync branch
+        run: |
+          branch="sync-skills/$(date +%Y-%m-%d)"
+          echo "branch=$branch" >> "$GITHUB_ENV"
+          git checkout -b "$branch"
+
+      - name: Pull updates for each external skill
+        id: sync
+        run: |
+          changed=""
+          for entry in $(jq -c '.[]' .github/skill-sources.json); do
+            name=$(echo "$entry" | jq -r '.name')
+            repo=$(echo "$entry" | jq -r '.repo')
+            branch_ref=$(echo "$entry" | jq -r '.branch')
+            echo "Syncing $name from $repo@$branch_ref"
+            before=$(git rev-parse HEAD)
+            if git subtree pull --prefix="$name" "$repo" "$branch_ref" --squash -m "chore(sync): update $name from upstream"; then
+              after=$(git rev-parse HEAD)
+              if [ "$before" != "$after" ]; then
+                changed="$changed $name"
+              fi
+            else
+              echo "::warning::subtree pull failed for $name, skipping"
+              git merge --abort 2>/dev/null || true
+            fi
+          done
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: Push branch
+        if: steps.sync.outputs.changed != ''
+        run: git push origin "$branch"
+
+      - name: Open PR
+        if: steps.sync.outputs.changed != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "Sync external skills:${{ steps.sync.outputs.changed }}" \
+            --body "Automated sync from upstream sources listed in \`.github/skill-sources.json\`. Review the diff before merging — these are third-party skills." \
+            --head "$branch" \
+            --base main
