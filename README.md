@@ -1,0 +1,97 @@
+# pi-pack
+
+My personal [pi](https://pi.dev) package: extensions (and later skills, prompts, themes)
+shared across machines.
+
+## Install
+
+```bash
+# On this machine — local path install, NOT copied, so edits are live and /reload picks them up
+pi install ~/Coding/pi-pack
+
+# On another machine — pinned git ref
+pi install git:git@github.com:Michaelyklam/pi-pack@v1
+```
+
+Update a pinned install by re-installing at a new ref:
+
+```bash
+pi install git:git@github.com:Michaelyklam/pi-pack@v2
+pi update --extensions   # reconciles existing clones to the configured ref
+```
+
+Uses pi's convention directories (no `pi` manifest in `package.json`), so anything
+dropped in these folders is picked up automatically:
+
+| Directory | Loaded as |
+|-----------|-----------|
+| `extensions/` | `.ts` / `.js` extensions (also `<name>/index.ts`) |
+| `skills/` | `SKILL.md` folders, plus top-level `.md` files |
+| `prompts/` | `.md` prompt templates |
+| `themes/` | `.json` themes |
+
+Enable/disable individual resources with `pi config` (Tab switches global vs project scope).
+
+## Contents
+
+### `extensions/ccstatusline-footer`
+
+Replaces pi's built-in footer with a mirror of my Claude Code statusline
+([ccstatusline](https://github.com/sirmalloc/ccstatusline)):
+
+```
+Model: claude-opus-5 | Ctx: 18.6k | ⎇ main | (+69,-7)
+Cost: $1.23 | Today: $80.51/$60.24 | Quota: $100.22/$1500
+```
+
+- **Model / Ctx / branch / Cost** come from pi itself (`ctx.model`, `ctx.getContextUsage()`,
+  `footerData.getGitBranch()`, and a usage sum over `sessionManager.getEntries()`).
+- **`(+N,-M)`** is `git diff --shortstat` + `git diff --cached --shortstat`, the same pair
+  ccstatusline uses, refreshed every 5s.
+- **`Today:`** shells out to `~/.local/bin/ccstatusline-today-vs-budget` (needs `ccusage` + `jq`).
+- **`Quota:`** reads `~/.cache/ccstatusline/usage.json`, and every 5 min invokes `ccstatusline`
+  once (stdout discarded) purely to refresh that cache — reusing its keychain OAuth flow
+  instead of reimplementing the `/oauth/usage` call.
+
+`render()` is synchronous; every slow source runs on a background timer that calls
+`tui.requestRender()`. Any source that fails just drops its segment, and the whole render
+is wrapped so it can never break the TUI.
+
+Installs itself on `session_start` in TUI mode. `/statusline` toggles back to pi's built-in footer.
+
+**Requires** `ccstatusline`, `ccusage`, `jq`, and the `~/.local/bin/ccstatusline-today-vs-budget`
+script on `PATH`. Without them the two money widgets are silently omitted and the rest still works.
+
+Knobs at the top of `index.ts`:
+
+| Constant | Default | Meaning |
+|----------|---------|---------|
+| `COLOR_MODE` | `"ansi"` | `"ansi"` = byte-identical ccstatusline 256-colors; `"theme"` = follow the pi theme |
+| `QUOTA_LIMIT_LABEL` | `"/$1500"` | Text after the quota figure |
+| `GIT_TTL_MS` | `5000` | Git shortstat refresh |
+| `TODAY_TTL_MS` | `60000` | `ccusage` refresh |
+| `QUOTA_READ_TTL_MS` | `30000` | Re-read the usage cache file |
+| `QUOTA_REFRESH_TTL_MS` | `300000` | Have `ccstatusline` refresh the usage cache |
+
+Note: `Cost:` is pi's own session cost, while `Today:` / `Quota:` describe *Claude Code*
+spend (ccusage over `~/.claude` transcripts + the Anthropic extra-usage balance). Pi usage
+billed to an API key does not appear in those two.
+
+## Development
+
+```bash
+npm install       # pi core packages as devDeps so tsc can resolve them
+npm run typecheck
+```
+
+Extensions import pi core from `peerDependencies` (`"*"`) — pi provides those at runtime,
+so they must never be bundled.
+
+Edit → `/reload` in a running pi session. No reinstall needed with the local-path install.
+
+## Not in this repo
+
+- `~/.pi/agent/settings.json` — mostly machine state (`lastChangelogVersion`).
+- `~/.pi/agent/auth.json`, `models-store.json`, `sessions/` — credentials and history. Never commit these.
+- Work-specific resources — those live in the project repo under `.pi/`, which pi loads
+  once the project is trusted.

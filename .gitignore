@@ -1,0 +1,12 @@
+node_modules/
+package-lock.json
+
+# never let pi runtime state leak in here
+auth.json
+models-store.json
+sessions/
+trust.json
+
+.DS_Store
+*.log
+temp/
