@@ -10,6 +10,3 @@ Prefer concrete explanation over polished-sounding abstraction.
 - Keep necessary technical terms, qualifications, and causal explanations.
 - Do not add a generic introduction or conclusion.
 - Do not remove useful detail merely to make the text shorter.
-
-Run `scripts/check.py --style technical` when available.
-Review findings in context rather than optimizing for a perfect score.
