@@ -1,0 +1,15 @@
+# Technical writing
+
+Prefer concrete explanation over polished-sounding abstraction.
+
+- Use consistent terminology.
+- Describe behavior before claiming benefits.
+- Remove hedging that does not change the claim.
+- Remove quality adjectives that are not supported by evidence.
+- Split sentences when they contain unrelated claims.
+- Keep necessary technical terms, qualifications, and causal explanations.
+- Do not add a generic introduction or conclusion.
+- Do not remove useful detail merely to make the text shorter.
+
+Run `scripts/check.py --style technical` when available.
+Review findings in context rather than optimizing for a perfect score.
