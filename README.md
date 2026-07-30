@@ -110,6 +110,31 @@ Known limitation: the SDK takes no `AbortSignal`, so cancelling returns control 
 agent immediately but does not tear down the in-flight request; `timeout` bounds it
 server-side (60s search / 45s fetch).
 
+### `extensions/ask-user`
+
+An `ask_user` tool: the model asks one multiple-choice question (2-5 options) in a popup,
+navigable with arrows or number keys, with an always-appended "Write my own answer…"
+option that opens an inline editor.
+
+| Outcome | Model is told |
+|---------|---------------|
+| Option picked | `User selected option N: <label>` |
+| Free-form answer | `User wrote their own answer: …` |
+| Esc | `User dismissed the question… Do not assume an answer` |
+| Turn aborted | `Cancelled` |
+| Non-TUI mode | `No interactive UI is available… ask in plain text instead` |
+
+Dismissal and cancellation are deliberately different: Esc means the human *declined*, so
+the model must not invent an answer, whereas an aborted turn just means the question never
+got its chance. `executionMode: "sequential"` keeps the popup from racing other tool calls
+for the editor.
+
+Ported from [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup/tree/main/extensions/ask-user).
+One deviation: upstream depends on `effect` (a 4.x beta) purely to bridge pi's `AbortSignal`
+into the UI promise and to tell interruption from real failure. That's a few lines of
+`AbortController` here, so this port stays dependency-free. Behavior is identical — including
+abort-mid-popup reporting `Cancelled` rather than `dismissed`.
+
 ## Development
 
 ```bash
