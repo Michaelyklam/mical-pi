@@ -1,0 +1,3 @@
+# Separate provider-reported cost from estimated cost
+
+Treat monetary cost reported by the upstream company's billing or usage system as authoritative. When no per-request reported cost exists, calculate a clearly labeled estimate from the current Pi model registry rather than owning or persisting unit-price tables in this extension. A router-prefixed model may inherit registry pricing only through an exact canonical model-ID match; absent current pricing is `n/a`, never zero or a fuzzy guess. Persist reported observations and calculated estimates separately, and display them separately when a provider-account session contains both, so an estimate cannot silently dilute the source-of-truth distinction.

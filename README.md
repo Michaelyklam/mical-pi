@@ -43,48 +43,43 @@ Adds `/fast [on|off|status]` for GPT-5.6 requests through the OpenAI and OpenAI 
 
 Fast mode uses the same model with accelerated API processing and premium token pricing. OpenAI guarantees the tier on its pay-as-you-go API; the ChatGPT OAuth backend may ignore or downgrade it.
 
-### `extensions/ccstatusline-footer`
+### `extensions/usage-footer`
 
-Replaces pi's built-in footer with a mirror of my Claude Code statusline
-([ccstatusline](https://github.com/sirmalloc/ccstatusline)):
+Replaces Pi's built-in footer with an account-aware model, cost, and allowance display:
 
 ```
-Model: claude-opus-5 | Ctx: 18.6k | ⎇ main | (+69,-7)
-Cost: $1.23 | Today: $80.51/$60.24 | Quota: $100.22/$1500
+Model: openai-codex/gpt-5.6-sol · personal | Ctx: 72.5k | ⎇ main | (+12,-4)
+Est: ~$0.33 | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
 ```
 
-- **Model / Ctx / branch / Cost** come from pi itself (`ctx.model`, `ctx.getContextUsage()`,
-  `footerData.getGitBranch()`, and a usage sum over `sessionManager.getEntries()`).
-- **`(+N,-M)`** is `git diff --shortstat` + `git diff --cached --shortstat`, the same pair
-  ccstatusline uses, refreshed every 5s.
-- **`Today:`** shells out to `~/.local/bin/ccstatusline-today-vs-budget` (needs `ccusage` + `jq`).
-- **`Quota:`** reads `~/.cache/ccstatusline/usage.json`, and every 5 min invokes `ccstatusline`
-  once (stdout discarded) purely to refresh that cache — reusing its keychain OAuth flow
-  instead of reimplementing the `/oauth/usage` call.
+A **Provider Account** is a Pi provider plus its stable upstream account identity. Different
+provider IDs remain separate even when they share a gateway. OAuth accounts are detected from
+upstream profile/claims; API-key and gateway accounts receive user labels at startup so key
+rotation does not fragment their history.
 
-`render()` is synchronous; every slow source runs on a background timer that calls
-`tui.requestRender()`. Any source that fails just drops its segment, and the whole render
-is wrapped so it can never break the TUI.
+- Session cost follows the selected Provider Account and includes all incurred branches.
+- Provider-reported cost and Pi-registry estimates remain visibly separate.
+- Router aliases inherit estimate pricing only from an unambiguous exact canonical model ID.
+- Anthropic usage comes from the selected account's OAuth profile/usage endpoints.
+- Codex usage comes from its account app-server protocol using Pi's selected OAuth token,
+  including account-wide daily tokens from other hosts.
+- Unsupported providers fall back to clearly labeled local-today tokens and estimates.
+- Failed account-wide data is marked stale for up to 30 minutes before local fallback.
+- Responsive rendering preserves provider/account identity and the most constrained Usage
+  window before coding-context or cost details.
 
-Installs itself on `session_start` in TUI mode. `/statusline` toggles back to pi's built-in footer.
+The extension follows Pi's theme and keeps `(+N,-M)` from staged plus unstaged Git shortstat.
+`/statusline` toggles the footer. `/usage` opens the interactive account dashboard; it can
+refresh, rename, archive, inspect, and switch Provider Accounts. `/account-label` quickly
+renames the active account.
 
-**Requires** `ccstatusline`, `ccusage`, `jq`, and the `~/.local/bin/ccstatusline-today-vs-budget`
-script on `PATH`. Without them the two money widgets are silently omitted and the rest still works.
+`codex` is required for account-wide Codex subscription data. `ccusage` is optional and only
+augments local fallback with matching native Claude/Codex transcripts. Neither `ccstatusline`,
+`jq`, nor the old `ccstatusline-today-vs-budget` helper is required.
 
-Knobs at the top of `index.ts`:
-
-| Constant | Default | Meaning |
-|----------|---------|---------|
-| `COLOR_MODE` | `"ansi"` | `"ansi"` = byte-identical ccstatusline 256-colors; `"theme"` = follow the pi theme |
-| `QUOTA_LIMIT_LABEL` | `"/$1500"` | Text after the quota figure |
-| `GIT_TTL_MS` | `5000` | Git shortstat refresh |
-| `TODAY_TTL_MS` | `60000` | `ccusage` refresh |
-| `QUOTA_READ_TTL_MS` | `30000` | Re-read the usage cache file |
-| `QUOTA_REFRESH_TTL_MS` | `300000` | Have `ccstatusline` refresh the usage cache |
-
-Note: `Cost:` is pi's own session cost, while `Today:` / `Quota:` describe *Claude Code*
-spend (ccusage over `~/.claude` transcripts + the Anthropic extra-usage balance). Pi usage
-billed to an API key does not appear in those two.
+Design and behavior are documented in [`CONTEXT.md`](CONTEXT.md),
+[`docs/usage-footer-ux.md`](docs/usage-footer-ux.md), and
+[`docs/plans/account-aware-usage-footer.md`](docs/plans/account-aware-usage-footer.md).
 
 ### `extensions/firecrawl-web`
 
@@ -149,6 +144,7 @@ abort-mid-popup reporting `Cancelled` rather than `dismissed`.
 ```bash
 npm install       # pi core packages as devDeps so tsc can resolve them
 npm run typecheck
+npm test
 ```
 
 Extensions import pi core from `peerDependencies` (`"*"`) — pi provides those at runtime,
