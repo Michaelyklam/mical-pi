@@ -77,6 +77,39 @@ Note: `Cost:` is pi's own session cost, while `Today:` / `Quota:` describe *Clau
 spend (ccusage over `~/.claude` transcripts + the Anthropic extra-usage balance). Pi usage
 billed to an API key does not appear in those two.
 
+### `extensions/firecrawl-web`
+
+Gives pi web access, which it otherwise has none of — the built-ins are only
+`read`/`bash`/`edit`/`write`/`grep`/`find`/`ls`, and pi has no MCP client, so this is a
+plain custom tool pair backed by [Firecrawl](https://firecrawl.dev):
+
+| Tool | Endpoint | Use |
+|------|----------|-----|
+| `web_search` | `POST /v2/search` | Discovery. `includeContent: true` also returns each result's page text, avoiding follow-up fetches. |
+| `web_fetch` | `POST /v2/scrape` | Known URL → clean markdown. Handles JS-rendered pages and public PDF/DOCX URLs. |
+
+**Auth is optional.** With no key it uses Firecrawl's documented keyless free tier
+(rate-limited). That tier is sanctioned only for official Firecrawl clients, which is why
+this uses the `firecrawl` SDK rather than hand-rolled `fetch` — undocumented keyless REST
+could be gated at any time. For higher limits, get a key from
+[firecrawl.dev](https://www.firecrawl.dev/signin) and export it:
+
+```bash
+export FIRECRAWL_API_KEY=fc-...   # in ~/.zshrc, NOT in this repo
+```
+
+The key is read per call, so exporting it and running `/reload` upgrades a live session off
+the keyless tier. A `429` while keyless says so explicitly and points at signup.
+
+This is the one resource here with a runtime dependency (`firecrawl`). Pi runs `npm install`
+for npm/git package installs, so it resolves automatically on other machines; for the
+local-path install run `npm install` yourself. The SDK is imported lazily inside `execute`,
+so sessions that never search pay no startup cost.
+
+Known limitation: the SDK takes no `AbortSignal`, so cancelling returns control to the
+agent immediately but does not tear down the in-flight request; `timeout` bounds it
+server-side (60s search / 45s fetch).
+
 ## Development
 
 ```bash

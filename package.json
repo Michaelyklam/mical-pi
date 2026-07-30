@@ -24,5 +24,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "firecrawl": "^4.31.1"
   }
 }
