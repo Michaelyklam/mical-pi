@@ -1,22 +1,21 @@
-# pi-pack
+# mical-pi
 
-My personal [pi](https://pi.dev) package: extensions (and later skills, prompts, themes)
-shared across machines.
+Michael's personal [pi](https://pi.dev) package: extensions, skills, prompts, and themes shared across machines. The skills are also exposed to other agent runtimes such as Claude Code.
 
 ## Install
 
 ```bash
 # On this machine — local path install, NOT copied, so edits are live and /reload picks them up
-pi install ~/Coding/pi-pack
+pi install ~/Coding/mical-pi
 
 # On another machine — pinned git ref
-pi install git:git@github.com:Michaelyklam/pi-pack@v1
+pi install git:git@github.com:Michaelyklam/mical-pi@v1
 ```
 
 Update a pinned install by re-installing at a new ref:
 
 ```bash
-pi install git:git@github.com:Michaelyklam/pi-pack@v2
+pi install git:git@github.com:Michaelyklam/mical-pi@v2
 pi update --extensions   # reconciles existing clones to the configured ref
 ```
 
@@ -33,6 +32,10 @@ dropped in these folders is picked up automatically:
 Enable/disable individual resources with `pi config` (Tab switches global vs project scope).
 
 ## Contents
+
+### `skills/`
+
+Personal development skills shared between Pi and Claude Code. Pi discovers them through this package; `~/.claude/skills` points to this directory for Claude Code. Third-party skills are tracked in `.github/skill-sources.json` and checked weekly by `.github/workflows/sync-external-skills.yml`.
 
 ### `extensions/ccstatusline-footer`
 
@@ -151,5 +154,4 @@ Edit → `/reload` in a running pi session. No reinstall needed with the local-p
 
 - `~/.pi/agent/settings.json` — mostly machine state (`lastChangelogVersion`).
 - `~/.pi/agent/auth.json`, `models-store.json`, `sessions/` — credentials and history. Never commit these.
-- Work-specific resources — those live in the project repo under `.pi/`, which pi loads
-  once the project is trusted.
+- API keys and other secrets.
