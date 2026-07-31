@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProviderAccount } from "./domain.ts";
-import { DashboardModel } from "./ui/usage-dashboard.ts";
+import { DashboardModel, frameDashboard } from "./ui/usage-dashboard.ts";
 import { validateLabels } from "./ui/account-wizard.ts";
 
 function account(key: string, providerId: string, label: string, active = false): ProviderAccount {
@@ -20,6 +20,16 @@ test("dashboard orders active account first and keeps browsing separate from mod
 	assert.deepEqual(calls, []);
 	model.activate("use");
 	assert.deepEqual(calls, ["use"]);
+});
+
+test("dashboard frame draws a full-width themed border", () => {
+	const theme = { fg: (_role: string, text: string) => text, bold: (text: string) => text };
+	assert.deepEqual(frameDashboard(["Usage", "body"], 10, theme), [
+		"┌────────┐",
+		"│Usage   │",
+		"│body    │",
+		"└────────┘",
+	]);
 });
 
 test("wizard validation requires gateway labels and provider-local uniqueness", () => {

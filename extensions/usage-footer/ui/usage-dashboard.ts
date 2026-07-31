@@ -1,5 +1,5 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AccountUsageView, ProviderAccount, SessionCostSummary } from "../domain.ts";
 
 export interface DashboardEntry {
@@ -42,6 +42,20 @@ function resetText(resetsAt: number | undefined, now = Date.now()): string {
 function bar(percent: number): string {
 	const filled = Math.max(0, Math.min(5, Math.round(percent / 20)));
 	return `${"█".repeat(filled)}${"░".repeat(5 - filled)}`;
+}
+
+export function frameDashboard(lines: string[], width: number, theme: ThemeLike): string[] {
+	if (width < 4) return lines.map((line) => truncateToWidth(line, width));
+	const innerWidth = width - 2;
+	const edge = (text: string) => theme.fg("borderAccent", text);
+	return [
+		edge(`┌${"─".repeat(innerWidth)}┐`),
+		...lines.map((line) => {
+			const content = truncateToWidth(line, innerWidth);
+			return `${edge("│")}${content}${" ".repeat(Math.max(0, innerWidth - visibleWidth(content)))}${edge("│")}`;
+		}),
+		edge(`└${"─".repeat(innerWidth)}┘`),
+	];
 }
 
 function detailLines(entry: DashboardEntry, theme: ThemeLike): string[] {
@@ -97,12 +111,16 @@ export async function showUsageDashboard(ctx: ExtensionCommandContext, entries: 
 				tui.requestRender();
 			},
 			render(width: number) {
+				const innerWidth = Math.max(1, width - 2);
 				const title = theme.fg("accent", theme.bold("Usage"));
 				const help = theme.fg("dim", "↑↓ account  r refresh  e rename  u use  a archive  esc close");
 				const detail = detailLines(model.selected, theme);
-				if (width < 80) return [title, "", ...detail, "", truncateToWidth(help, width)].map((line) => truncateToWidth(line, width));
-				const leftWidth = Math.min(30, Math.floor(width * 0.35));
-				const rightWidth = width - leftWidth - 3;
+				if (innerWidth < 80) {
+					const content = [title, "", ...detail, "", truncateToWidth(help, innerWidth)].map((line) => truncateToWidth(line, innerWidth));
+					return frameDashboard(content, width, theme);
+				}
+				const leftWidth = Math.min(30, Math.floor(innerWidth * 0.35));
+				const rightWidth = innerWidth - leftWidth - 3;
 				const left = model.entries.map((entry) => {
 					const selected = entry.account.accountKey === model.selected.account.accountKey;
 					const name = entry.account.label ?? entry.account.suggestedLabel ?? entry.account.providerId;
@@ -112,7 +130,7 @@ export async function showUsageDashboard(ctx: ExtensionCommandContext, entries: 
 				const rows = Math.max(left.length, detail.length);
 				const body: string[] = [];
 				for (let i = 0; i < rows; i++) body.push(`${truncateToWidth(left[i] ?? "", leftWidth).padEnd(leftWidth)} │ ${truncateToWidth(detail[i] ?? "", rightWidth)}`);
-				return [title, "", ...body, "", truncateToWidth(help, width)];
+				return frameDashboard([title, "", ...body, "", truncateToWidth(help, innerWidth)], width, theme);
 			},
 		};
 	}, overlay ? { overlay: true, overlayOptions: { width: "80%", minWidth: 68, maxHeight: "85%", anchor: "center" } } : undefined);
