@@ -139,6 +139,25 @@ into the UI promise and to tell interruption from real failure. That's a few lin
 `AbortController` here, so this port stays dependency-free. Behavior is identical — including
 abort-mid-popup reporting `Cancelled` rather than `dismissed`.
 
+### `extensions/subagents` + `skills/subagents`
+
+Runs up to four background agents through Pi, Claude Code, or Codex while the parent keeps
+working. The extension provides tools to spawn, check, list, wait for, and cancel children;
+completed results return automatically as follow-up messages. `/subagents` opens an interactive
+picker and takeover view, while `/btw` runs a one-off side question without adding its answer to
+the parent model's context.
+
+The companion skill teaches the model when and how to delegate, including the requirement that
+each child receive a self-contained prompt. Pi children inherit the parent model and thinking
+level by default. Claude and Codex children require their respective CLI/SDK authentication.
+
+Vendored from
+[davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup/tree/2657bae/extensions/subagents)
+at upstream commit `2657bae`, together with its `tool-call-timeout` helper and runtime dependencies.
+The matching
+[subagents skill](https://github.com/davis7dotsh/my-pi-setup/tree/2657bae/skills/subagents)
+is included unchanged.
+
 ## Development
 
 ```bash
