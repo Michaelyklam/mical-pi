@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { AccountObservation, AuthType } from "../domain.ts";
+import { frameMenu } from "./frame.ts";
 
 export interface LabelRow {
 	accountKey: string;
@@ -33,6 +34,7 @@ export async function showAccountWizard(ctx: ExtensionContext, observations: rea
 		detected: account.suggestedLabel,
 	}));
 	if (rows.length === 0) return [];
+	const overlay = (process.stdout.columns ?? 100) >= 70;
 	return ctx.ui.custom<LabelRow[] | undefined>((tui, theme, _keybindings, done) => {
 		let selected = 0;
 		let editing = false;
@@ -60,6 +62,7 @@ export async function showAccountWizard(ctx: ExtensionContext, observations: rea
 				tui.requestRender();
 			},
 			render(width: number) {
+				const innerWidth = Math.max(1, width - 2);
 				const lines = [
 					theme.fg("accent", theme.bold("Name Provider Accounts")),
 					"Labels appear in the footer and usage dashboard.",
@@ -73,8 +76,8 @@ export async function showAccountWizard(ctx: ExtensionContext, observations: rea
 				}
 				if (error) lines.push("", theme.fg("error", error));
 				lines.push("", theme.fg("dim", "↑↓/tab move  enter edit  ctrl+s save  esc skip for now"));
-				return lines.map((line) => truncateToWidth(line, width));
+				return frameMenu(lines.map((line) => truncateToWidth(line, innerWidth)), width, theme);
 			},
 		};
-	}, { overlay: true, overlayOptions: { width: "75%", minWidth: 64, maxHeight: "80%", anchor: "center" } });
+	}, overlay ? { overlay: true, overlayOptions: { width: "75%", minWidth: 64, maxHeight: "80%", anchor: "center" } } : undefined);
 }

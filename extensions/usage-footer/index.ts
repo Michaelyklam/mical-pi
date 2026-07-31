@@ -163,18 +163,16 @@ export default function usageFooter(pi: ExtensionAPI) {
 		});
 	}
 
-	async function dashboardEntries(ctx: ExtensionContext): Promise<DashboardEntry[]> {
-		const entries: DashboardEntry[] = [];
-		for (const account of catalog.list()) {
-			const usage = monitor?.get(account.accountKey) ?? { status: "unavailable" as const, windows: [] };
-			const local = localUsage ? await localUsage.summarize(account).catch(() => undefined) : undefined;
-			entries.push({
-				account,
-				usage: local ? { ...usage, local } : usage,
-				cost: ledger(ctx).summarize(ctx.sessionManager.getEntries() as any[], account),
-			});
-		}
-		return entries;
+	function dashboardEntry(ctx: ExtensionContext, account: ProviderAccount): DashboardEntry {
+		return {
+			account,
+			usage: monitor?.get(account.accountKey) ?? { status: "unavailable" as const, windows: [] },
+			cost: ledger(ctx).summarize(ctx.sessionManager.getEntries() as any[], account),
+		};
+	}
+
+	function dashboardEntries(ctx: ExtensionContext): DashboardEntry[] {
+		return catalog.list().map((account) => dashboardEntry(ctx, account));
 	}
 
 	pi.on("session_start", async (event, ctx) => {
@@ -283,12 +281,19 @@ export default function usageFooter(pi: ExtensionAPI) {
 		description: "Open the Provider Account usage dashboard",
 		handler: async (_args, ctx) => {
 			while (true) {
-				const action = await showUsageDashboard(ctx, await dashboardEntries(ctx), currentAccount?.accountKey);
+				const action = await showUsageDashboard(ctx, dashboardEntries(ctx), currentAccount?.accountKey, {
+					loadLocal: async (entry) => localUsage?.summarize(entry.account),
+					refresh: async (entry) => {
+						await monitor?.refresh(entry.account, { force: true });
+						const account = catalog.get(entry.account.accountKey) ?? entry.account;
+						const updated = dashboardEntry(ctx, account);
+						return { ...updated, usage: { ...updated.usage, local: entry.usage.local } };
+					},
+				});
 				if (action.type === "close") return;
 				const account = catalog.get(action.accountKey);
 				if (!account) continue;
-				if (action.type === "refresh") await monitor?.refresh(account, { force: true });
-				else if (action.type === "rename") {
+				if (action.type === "rename") {
 					const label = await ctx.ui.input("Account label", account.label ?? account.suggestedLabel ?? "");
 					if (label) {
 						await catalog.label({ accountKey: account.accountKey, label }).catch((error) => ctx.ui.notify(String(error), "error"));
