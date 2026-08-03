@@ -162,8 +162,15 @@ export default function (pi: ExtensionAPI) {
   };
 
   const updateStatus = (manager: SubagentManagerShape) => {
-    if (!ui) return;
     const subs = manager.view.list();
+    const knownCosts = subs
+      .map((snap) => snap.usage.costUsd)
+      .filter((cost): cost is number => cost !== undefined);
+    const costUsd = knownCosts.length > 0
+      ? knownCosts.reduce((total, cost) => total + cost, 0)
+      : undefined;
+    pi.events.emit("mical:subagent-cost", { costUsd });
+    if (!ui) return;
     if (subs.length === 0) {
       ui.setStatus("subagents", undefined);
       return;
@@ -253,6 +260,7 @@ export default function (pi: ExtensionAPI) {
     unsubStatus?.();
     unsubStatus = undefined;
     ui?.setStatus("subagents", undefined);
+    pi.events.emit("mical:subagent-cost", { costUsd: undefined });
     ui = undefined;
     const closing = runtime;
     runtime = undefined;

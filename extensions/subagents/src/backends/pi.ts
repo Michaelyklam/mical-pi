@@ -359,6 +359,7 @@ const makePiSession = (
         _tag: "UsageChanged",
         tokens: usage?.tokens ?? undefined,
         contextWindow: activeModel()?.contextWindow ?? usage?.contextWindow,
+        costUsd: session.getSessionStats().cost,
       });
     };
 

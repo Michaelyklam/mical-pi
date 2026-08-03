@@ -48,8 +48,8 @@ Fast mode uses the same model with accelerated API processing and premium token 
 Replaces Pi's built-in footer with an account-aware model, cost, and allowance display:
 
 ```
-Model: openai-codex/gpt-5.6-sol · personal | Ctx: 72.5k | ⎇ main | (+12,-4)
-Est: ~$0.33 | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
+Model: gpt-5.6-sol · personal | ⚡ fast | Est: ~$0.33 | [Subagents: $0.13] | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
+Ctx: 72.5k/371k | ⎇ main | (+12,-4)
 ```
 
 A **Provider Account** is a Pi provider plus its stable upstream account identity. Different
@@ -65,8 +65,10 @@ rotation does not fragment their history.
   including account-wide daily tokens from other hosts.
 - Unsupported providers fall back to clearly labeled local-today tokens and estimates.
 - Failed account-wide data is marked stale for up to 30 minutes before local fallback.
-- Responsive rendering preserves provider/account identity and the most constrained Usage
-  window before coding-context or cost details.
+- Dispatcher and subagent costs stay separate: the main estimate is followed by a
+  bracketed aggregate for Pi, Claude Code, and Codex subagents.
+- Responsive rendering preserves model/account identity, extension statuses, and coding
+  context before cost, allowance, and Git details.
 
 The extension follows Pi's theme and keeps `(+N,-M)` from staged plus unstaged Git shortstat.
 `/statusline` toggles the footer. `/usage` opens the interactive account dashboard; it can

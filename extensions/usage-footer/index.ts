@@ -48,9 +48,16 @@ export default function usageFooter(pi: ExtensionAPI) {
 	let currentAccount: ProviderAccount | undefined;
 	let enabled = false;
 	let requestRender: (() => void) | undefined;
+	let subagentCostUsd: number | undefined;
 	let git: GitChanges | undefined;
 	let gitTimer: NodeJS.Timeout | undefined;
 	const snapshotStore = new JsonSnapshotStore(SNAPSHOT_FILE);
+
+	pi.events.on("mical:subagent-cost", (data) => {
+		const cost = (data as { costUsd?: unknown }).costUsd;
+		subagentCostUsd = typeof cost === "number" && Number.isFinite(cost) ? cost : undefined;
+		requestRender?.();
+	});
 
 	const pricing = (ctx: ExtensionContext) => new PricingResolver(ctx.modelRegistry.getAll());
 	const ledger = (ctx: ExtensionContext) => new SessionLedger(pricing(ctx), (provider) => catalog.resolveLegacy(provider)?.accountKey);
@@ -136,10 +143,12 @@ export default function usageFooter(pi: ExtensionAPI) {
 					if (!model || !account || !monitor) return [theme.fg("dim", "Usage footer loading…")];
 					const cost = ledger(ctx).summarize(ctx.sessionManager.getEntries() as any[], account);
 					return renderFooterLines({
-						providerId: String(model.provider),
 						modelId: model.id,
 						accountLabel: account.label ?? account.suggestedLabel ?? account.providerId,
+						statuses: [...footerData.getExtensionStatuses().values()],
+						subagentCostUsd,
 						contextTokens: ctx.getContextUsage()?.tokens ?? undefined,
+						contextWindowTokens: model.contextWindow,
 						branch: footerData.getGitBranch(),
 						git,
 						cost,

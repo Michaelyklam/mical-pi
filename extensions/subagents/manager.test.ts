@@ -96,6 +96,7 @@ test("stub subagent completes and delivers a final result", async () => {
       /\[stub:claude\] completed: Say hello to the tests/,
     );
     assert.ok(done.turns >= 2);
+    assert.equal(done.usage.costUsd, 0.015);
     assert.ok(done.transcript.some((item) => item.kind === "toolResult"));
     // The waitFor marked the settle as consumed.
     assert.deepEqual(settled, [{ id: snap.id, consumed: true }]);

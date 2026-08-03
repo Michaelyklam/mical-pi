@@ -10,6 +10,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { calculateCost, type Model, type Usage } from "@earendil-works/pi-ai";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Cause, Scope } from "effect";
@@ -215,6 +216,52 @@ export function parseThreadTokenUsage(params: unknown) {
     tokens: numberValue(last?.totalTokens),
     contextWindow: numberValue(usage?.modelContextWindow),
   };
+}
+
+/** Convert Codex's cumulative thread counters to Pi's billable usage shape. */
+export function parseThreadCumulativeUsage(params: unknown): Usage | undefined {
+  const total = record(record(record(params)?.tokenUsage)?.total);
+  const inputTokens = numberValue(total?.inputTokens);
+  const outputTokens = numberValue(total?.outputTokens);
+  if (inputTokens === undefined || outputTokens === undefined) return undefined;
+  const cachedInputTokens = Math.min(
+    inputTokens,
+    numberValue(total?.cachedInputTokens) ?? 0,
+  );
+  return {
+    input: inputTokens - cachedInputTokens,
+    output: outputTokens,
+    cacheRead: cachedInputTokens,
+    cacheWrite: 0,
+    reasoning: numberValue(total?.reasoningOutputTokens),
+    totalTokens: inputTokens + outputTokens,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
+function codexCost(
+  task: SpawnTask,
+  modelLabel: string | undefined,
+  usage: Usage | undefined,
+) {
+  if (!usage) return undefined;
+  const models = task.parent.modelRegistry?.getAll() ?? [];
+  const label = modelLabel ?? task.model;
+  const slash = label?.indexOf("/") ?? -1;
+  let model: Model<any> | undefined;
+  if (label && slash > 0) {
+    model = task.parent.modelRegistry?.find(
+      label.slice(0, slash),
+      label.slice(slash + 1),
+    );
+  }
+  const canonical = label?.split("/").pop();
+  model ??= models.find(
+    (candidate) =>
+      candidate.provider === "openai-codex" && candidate.id === canonical,
+  );
+  model ??= models.find((candidate) => candidate.id === canonical);
+  return model ? calculateCost(model, usage).total : undefined;
 }
 
 // --- Item translation --------------------------------------------------------
@@ -708,11 +755,16 @@ const makeCodexSession = (
         }
         case "thread/tokenUsage/updated": {
           const { tokens, contextWindow } = parseThreadTokenUsage(params);
+          const costUsd = codexCost(
+            task,
+            state.meta.modelLabel,
+            parseThreadCumulativeUsage(params),
+          );
           if (contextWindow !== undefined) {
             state.meta = { ...state.meta, contextWindow };
             emit({ _tag: "MetaChanged", meta: { contextWindow } });
           }
-          emit({ _tag: "UsageChanged", tokens, contextWindow });
+          emit({ _tag: "UsageChanged", tokens, contextWindow, costUsd });
           break;
         }
         case "error": {

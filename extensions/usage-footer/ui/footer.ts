@@ -2,10 +2,13 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AccountUsageView, AllowanceWindow, SessionCostSummary } from "../domain.ts";
 
 export interface FooterViewModel {
-	providerId: string;
 	modelId: string;
 	accountLabel: string;
+	statuses?: readonly string[];
+	/** Dispatcher-owned child cost, shown separately from the main session cost. */
+	subagentCostUsd?: number;
 	contextTokens?: number;
+	contextWindowTokens?: number;
 	branch?: string | null;
 	git?: { insertions: number; deletions: number };
 	cost: Pick<SessionCostSummary, "reported" | "estimated" | "hasEstimatedUsage" | "hasUnpricedUsage">;
@@ -14,7 +17,8 @@ export interface FooterViewModel {
 
 interface ThemeLike { fg(role: string, text: string): string }
 
-const tokens = (count: number): string => count >= 1_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : count >= 1_000 ? `${(count / 1_000).toFixed(1)}k` : String(count);
+const compact = (count: number, divisor: number, suffix: string): string => `${(count / divisor).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+const tokens = (count: number): string => count >= 1_000_000 ? compact(count, 1_000_000, "M") : count >= 1_000 ? compact(count, 1_000, "k") : String(count);
 const money = (amount: number): string => `$${amount.toFixed(2)}`;
 
 function progress(window: AllowanceWindow, theme: ThemeLike): string {
@@ -51,31 +55,51 @@ function joined(parts: string[], theme: ThemeLike): string {
 }
 
 export function renderFooterLines(view: FooterViewModel, width: number, theme: ThemeLike): string[] {
-	const fullIdentity = theme.fg("accent", `Model: ${view.providerId}/${view.modelId} · ${view.accountLabel}`);
-	const context = theme.fg("dim", `Ctx: ${view.contextTokens === undefined ? "?" : tokens(view.contextTokens)}`);
-	const branch = view.branch ? theme.fg("syntaxKeyword", `⎇ ${view.branch}`) : "";
-	const diff = view.git && (view.git.insertions || view.git.deletions) ? theme.fg("warning", `(+${view.git.insertions},-${view.git.deletions})`) : "";
-	let line1 = joined([fullIdentity, context, branch, diff], theme);
-	for (const reduced of [[fullIdentity, context, branch], [fullIdentity, context], [fullIdentity]]) {
+	const fullIdentity = theme.fg("accent", `Model: ${view.modelId} · ${view.accountLabel}`);
+	const statuses = view.statuses?.join(theme.fg("dim", " · ")) ?? "";
+	const cost = costText(view.cost, theme);
+	const subagentCost = view.subagentCostUsd === undefined
+		? ""
+		: theme.fg("dim", `[Subagents: ${money(view.subagentCostUsd)}]`);
+	const usage = usageText(view.usage, theme);
+	const compactUsage = usageText(view.usage, theme, true);
+
+	let line1 = joined([fullIdentity, statuses, cost, subagentCost, usage], theme);
+	const reductions = subagentCost
+		? [
+			[fullIdentity, statuses, cost, subagentCost, compactUsage],
+			[fullIdentity, statuses, cost, subagentCost],
+			[fullIdentity, statuses, subagentCost],
+			[fullIdentity, statuses],
+			[fullIdentity],
+		]
+		: [
+			[fullIdentity, statuses, usage],
+			[fullIdentity, statuses, compactUsage],
+			[fullIdentity, statuses],
+			[fullIdentity],
+		];
+	for (const reduced of reductions) {
 		if (visibleWidth(line1) <= width) break;
 		line1 = joined(reduced, theme);
 	}
 	if (visibleWidth(line1) > width) {
 		const suffix = ` · ${view.accountLabel}`;
-		const prefix = `${view.providerId}/`;
-		const modelWidth = Math.max(1, width - visibleWidth(prefix) - visibleWidth(suffix));
+		const modelWidth = Math.max(1, width - visibleWidth(suffix));
 		const compactModel = modelWidth <= 1 ? "…" : truncateToWidth(view.modelId, modelWidth, "…");
-		line1 = theme.fg("accent", `${prefix}${compactModel}${suffix}`);
+		line1 = theme.fg("accent", `${compactModel}${suffix}`);
 	}
 	line1 = truncateToWidth(line1, width, "…");
 
-	const cost = costText(view.cost, theme);
-	let usage = usageText(view.usage, theme);
-	let line2 = joined([cost, usage], theme);
-	if (visibleWidth(line2) > width) line2 = usage;
-	if (visibleWidth(line2) > width) {
-		usage = usageText(view.usage, theme, true);
-		line2 = usage;
+	const contextUsed = view.contextTokens === undefined ? "?" : tokens(view.contextTokens);
+	const contextTotal = view.contextWindowTokens === undefined ? "?" : tokens(view.contextWindowTokens);
+	const context = theme.fg("dim", `Ctx: ${contextUsed}/${contextTotal}`);
+	const branch = view.branch ? theme.fg("syntaxKeyword", `⎇ ${view.branch}`) : "";
+	const diff = view.git && (view.git.insertions || view.git.deletions) ? theme.fg("warning", `(+${view.git.insertions},-${view.git.deletions})`) : "";
+	let line2 = joined([context, branch, diff], theme);
+	for (const reduced of [[context, branch], [context]]) {
+		if (visibleWidth(line2) <= width) break;
+		line2 = joined(reduced, theme);
 	}
 	line2 = truncateToWidth(line2, width, "…");
 	return [line1, line2];

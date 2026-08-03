@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { contextOccupancyTokens } from "./src/backends/claude.ts";
-import { parseThreadTokenUsage } from "./src/backends/codex.ts";
+import {
+  parseThreadCumulativeUsage,
+  parseThreadTokenUsage,
+} from "./src/backends/codex.ts";
 
 // --- Claude: per-request occupancy, never the run aggregate ------------------
 
@@ -91,6 +94,28 @@ test("Codex occupancy uses tokenUsage.last.totalTokens, not the cumulative total
   );
   assert.equal(tokens, 61_000);
   assert.equal(contextWindow, 272_000);
+});
+
+test("Codex cumulative usage separates cached input for cost calculation", () => {
+  const usage = parseThreadCumulativeUsage(
+    codexParams({
+      total: {
+        inputTokens: 100_000,
+        cachedInputTokens: 80_000,
+        outputTokens: 5_000,
+        reasoningOutputTokens: 2_000,
+      },
+    }),
+  );
+  assert.deepEqual(usage, {
+    input: 20_000,
+    output: 5_000,
+    cacheRead: 80_000,
+    cacheWrite: 0,
+    reasoning: 2_000,
+    totalTokens: 105_000,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  });
 });
 
 test("Codex occupancy is unknown when last usage or window is absent", () => {

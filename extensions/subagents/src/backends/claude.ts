@@ -308,6 +308,7 @@ const makeClaudeSession = (
       liveText: "",
       tools: new Map<string, string>(),
       settleWaiters: new Set<() => void>(),
+      costUsd: 0,
       meta: {
         backend: "claude",
         modelLabel: task.model,
@@ -462,9 +463,13 @@ const makeClaudeSession = (
       // contextOccupancyTokens); only the capacity is trustworthy here. The
       // occupancy itself was already emitted by the last assistant message.
       const contextWindow = resultContextWindow(result);
+      if (Number.isFinite(result.total_cost_usd) && result.total_cost_usd >= 0) {
+        state.costUsd += result.total_cost_usd;
+      }
       emit({
         _tag: "UsageChanged",
         contextWindow: contextWindow ?? state.meta.contextWindow,
+        costUsd: state.costUsd,
       });
       if (
         contextWindow !== undefined &&
