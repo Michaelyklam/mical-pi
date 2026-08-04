@@ -94,18 +94,21 @@ plain custom tool pair backed by [Firecrawl](https://firecrawl.dev):
 | `web_search` | `POST /v2/search` | Discovery. `includeContent: true` also returns each result's page text, avoiding follow-up fetches. |
 | `web_fetch` | `POST /v2/scrape` | Known URL → clean markdown. Handles JS-rendered pages and public PDF/DOCX URLs. |
 
-**Auth is optional.** With no key it uses Firecrawl's documented keyless free tier
-(rate-limited). That tier is sanctioned only for official Firecrawl clients, which is why
-this uses the `firecrawl` SDK rather than hand-rolled `fetch` — undocumented keyless REST
-could be gated at any time. For higher limits, get a key from
-[firecrawl.dev](https://www.firecrawl.dev/signin) and export it:
+This installation uses Michael's self-hosted Firecrawl server. Its URL and bearer token
+live in `~/.pi/agent/firecrawl.env`, which must have mode `0600` and must never be committed.
+The extension reads configuration at call time. The private file takes precedence over
+inherited environment variables, preventing stale shell credentials from redirecting Pi:
 
 ```bash
-export FIRECRAWL_API_KEY=fc-...   # in ~/.zshrc, NOT in this repo
+FIRECRAWL_API_URL=https://firecrawl.example.com
+FIRECRAWL_API_KEY=<private bearer token>
 ```
 
-The key is read per call, so exporting it and running `/reload` upgrades a live session off
-the keyless tier. A `429` while keyless says so explicitly and points at signup.
+`PI_CODING_AGENT_DIR` changes the directory containing `firecrawl.env`. If neither the file
+nor environment variables provide configuration, the official SDK's rate-limited keyless
+cloud tier remains available as a fallback. See
+[`docs/firecrawl.md`](docs/firecrawl.md) for credential installation, connectivity checks,
+and external-agent API endpoints.
 
 This is the one resource here with a runtime dependency (`firecrawl`). Pi runs `npm install`
 for npm/git package installs, so it resolves automatically on other machines; for the

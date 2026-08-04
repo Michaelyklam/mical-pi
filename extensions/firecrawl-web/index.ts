@@ -7,21 +7,19 @@
  *   web_search  -> Firecrawl POST /v2/search   (discovery; optional inline content)
  *   web_fetch   -> Firecrawl POST /v2/scrape   (known URL -> clean markdown)
  *
- * Auth (per Firecrawl agent-onboarding SKILL.md):
- *   - FIRECRAWL_API_KEY set   -> normal keyed use, higher limits (Path B/E).
- *   - key absent              -> documented keyless free tier (Path F), which is
- *     sanctioned only for official Firecrawl clients, which is exactly why this
- *     uses the `firecrawl` SDK instead of hand-rolled fetch against the REST API.
- *     Keyless is rate-limited; a 429 is surfaced with a hint to add a key.
- *
- * The key is read at call time, not module load, so exporting FIRECRAWL_API_KEY
- * and running /reload upgrades an existing session off the keyless tier.
+ * Configuration is read at call time from ~/.pi/agent/firecrawl.env (or the
+ * directory set by PI_CODING_AGENT_DIR), falling back to FIRECRAWL_API_URL and
+ * FIRECRAWL_API_KEY. The local file must not be accessible by group/other.
+ * Without configuration, the official SDK's keyless cloud tier is used.
  *
  * Cancellation caveat: the SDK accepts no AbortSignal, so pi's signal is honored
  * by racing it and returning control to the agent. The in-flight HTTP request is
  * not actually torn down; `timeout` bounds it server-side instead.
  */
 
+import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
 	DEFAULT_MAX_BYTES,
@@ -49,9 +47,65 @@ const CACHE_MAX_AGE_MS = 10 * 60_000;
 const DEFAULT_SEARCH_LIMIT = 5;
 const MAX_SEARCH_LIMIT = 20;
 
+const CONFIG_FILE_NAME = "firecrawl.env";
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
+
+type FirecrawlConfig = {
+	apiKey?: string;
+	apiUrl?: string;
+};
+
+function configPath(): string {
+	const configDir = process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
+	return join(configDir, CONFIG_FILE_NAME);
+}
+
+function unquote(value: string): string {
+	const trimmed = value.trim();
+	if (
+		(trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+		(trimmed.startsWith("'") && trimmed.endsWith("'"))
+	) {
+		return trimmed.slice(1, -1);
+	}
+	return trimmed;
+}
+
+function localConfig(): FirecrawlConfig {
+	const path = configPath();
+	let contents: string;
+	try {
+		const mode = statSync(path).mode & 0o777;
+		if ((mode & 0o077) !== 0) {
+			throw new Error(`${path} must have mode 0600 (or stricter)`);
+		}
+		contents = readFileSync(path, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+		throw error;
+	}
+
+	const values = new Map<string, string>();
+	for (const line of contents.split(/\r?\n/)) {
+		const match = line.match(/^\s*(?:export\s+)?(FIRECRAWL_API_(?:KEY|URL))=(.*)$/);
+		if (match) values.set(match[1], unquote(match[2]));
+	}
+	return {
+		apiKey: values.get("FIRECRAWL_API_KEY")?.trim() || undefined,
+		apiUrl: values.get("FIRECRAWL_API_URL")?.trim() || undefined,
+	};
+}
+
+function config(): FirecrawlConfig {
+	const local = localConfig();
+	return {
+		apiKey: local.apiKey || process.env.FIRECRAWL_API_KEY?.trim(),
+		apiUrl: local.apiUrl || process.env.FIRECRAWL_API_URL?.trim(),
+	};
+}
 
 type SearchResult = {
 	url?: string;
@@ -68,19 +122,22 @@ type SearchResult = {
  * dead extension.
  */
 async function client(): Promise<{ fc: any; keyed: boolean }> {
-	const apiKey = process.env.FIRECRAWL_API_KEY?.trim();
+	const { apiKey, apiUrl } = config();
 	let mod: any;
 	try {
 		mod = await import("firecrawl");
 	} catch (error) {
 		throw new Error(
-			`firecrawl SDK not installed in pi-pack (${(error as Error).message}). ` +
-				`Run: npm install --prefix ~/Coding/pi-pack`,
+			`firecrawl SDK not installed in mical-pi (${(error as Error).message}). ` +
+				`Run: npm install --prefix ~/Coding/mical-pi`,
 		);
 	}
 	const Client = mod.Firecrawl ?? mod.default;
-	// `{}` (not `{ apiKey: undefined }`) keeps the SDK on its keyless path.
-	return { fc: new Client(apiKey ? { apiKey } : {}), keyed: Boolean(apiKey) };
+	const options = {
+		...(apiKey ? { apiKey } : {}),
+		...(apiUrl ? { apiUrl: apiUrl.replace(/\/$/, "") } : {}),
+	};
+	return { fc: new Client(options), keyed: Boolean(apiKey) };
 }
 
 /** Honor pi's abort signal even though the SDK cannot cancel the request. */
@@ -98,7 +155,7 @@ function withSignal<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
 function explain(error: unknown, keyed: boolean): string {
 	const message = error instanceof Error ? error.message : String(error);
 	if (/\b429\b|rate limit/i.test(message) && !keyed) {
-		return `${message}\n\nThis is Firecrawl's keyless free tier. Set FIRECRAWL_API_KEY for higher limits (https://www.firecrawl.dev/signin).`;
+		return `${message}\n\nThis is Firecrawl's keyless free tier. Configure FIRECRAWL_API_KEY for higher limits.`;
 	}
 	if (/\b401\b|\b403\b|unauthor/i.test(message) && keyed) {
 		return `${message}\n\nFIRECRAWL_API_KEY looks invalid or lacks access to this endpoint.`;
