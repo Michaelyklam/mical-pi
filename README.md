@@ -163,6 +163,28 @@ The matching
 [subagents skill](https://github.com/davis7dotsh/my-pi-setup/tree/2657bae/skills/subagents)
 is included unchanged.
 
+### `extensions/workflows`
+
+Runs model-authored, multi-phase Pi-agent pipelines through one `workflow` tool. A restricted
+JavaScript orchestration script can sequence phases, fan out up to four isolated agents in
+parallel, require schema-validated results, select a model or thinking level per agent, and
+aggregate the outputs. Use it only when explicitly requesting a workflow or saying
+`ultracode`; ordinary one-off delegation should continue to use the subagent tools.
+
+Runs can block with live progress or continue in the background. `/workflows` opens a dashboard
+for run status, per-agent transcripts, timing, context utilization, token cost, and report
+export. Bounded artifacts are stored under `~/.pi/agent/workflows/<runId>/`. Workflow scripts
+cannot access files, the network, imports, timers, or process APIs, although their trusted child
+agents retain normal Pi tools. Parallel phases should therefore investigate and return
+structured findings; use a single later agent for file mutations.
+
+Vendored from
+[davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup/tree/4a37b7830bda00d4a7e861218f70e70097ddf2e8/extensions/workflows)
+at upstream commit `4a37b78`, together with its shared child-session, activity-status, and
+context-utilization helpers. One local fix keeps the first-response watchdog timer referenced
+until it settles; upstream's unreferenced timer allows Node 22's test runner to exit before the
+watchdog fires. `acorn` is required at runtime to parse workflow metadata without evaluating it.
+
 ## Development
 
 ```bash

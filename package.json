@@ -25,12 +25,14 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run test:usage-footer && npm run test:subagents",
+    "test": "npm run test:usage-footer && npm run test:subagents && npm run test:workflows",
     "test:usage-footer": "tsx --test \"extensions/usage-footer/**/*.test.ts\"",
-    "test:subagents": "npm --prefix extensions/subagents test"
+    "test:subagents": "npm --prefix extensions/subagents test",
+    "test:workflows": "node --test --experimental-strip-types extensions/workflows/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.216",
+    "acorn": "^8.18.0",
     "effect": "^4.0.0-beta.99",
     "firecrawl": "^4.31.1"
   }
