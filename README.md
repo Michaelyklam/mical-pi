@@ -48,7 +48,8 @@ Fast mode uses the same model with accelerated API processing and premium token 
 Replaces Pi's built-in footer with an account-aware model, cost, and allowance display:
 
 ```
-Model: gpt-5.6-sol · personal | ⚡ fast | Est: ~$0.33 | [Subagents: $0.13] | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
+Model: gpt-5.6-sol · personal | ⚡ fast | Est: ~$0.33 | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
+subagents: ■ 12 running · /subagents to view | workflows: ■ 2 running · /workflows to view | [Subagents: $0.13]
 Ctx: 72.5k/371k | ⎇ main | (+12,-4)
 ```
 
@@ -65,10 +66,10 @@ rotation does not fragment their history.
   including account-wide daily tokens from other hosts.
 - Unsupported providers fall back to clearly labeled local-today tokens and estimates.
 - Failed account-wide data is marked stale for up to 30 minutes before local fallback.
-- Dispatcher and subagent costs stay separate: the main estimate is followed by a
-  bracketed aggregate for Pi, Claude Code, and Codex subagents.
-- Responsive rendering preserves model/account identity, extension statuses, and coding
-  context before cost, allowance, and Git details.
+- Dispatcher and child-agent costs stay separate. Subagent/workflow activity and the
+  bracketed aggregate for Pi, Claude Code, and Codex children use a dedicated row when present.
+- Responsive rendering preserves model/account identity, non-agent extension statuses, and
+  coding context before cost, allowance, and Git details.
 
 The extension follows Pi's theme and keeps `(+N,-M)` from staged plus unstaged Git shortstat.
 `/statusline` toggles the footer. `/usage` opens the interactive account dashboard; it can
@@ -146,7 +147,7 @@ abort-mid-popup reporting `Cancelled` rather than `dismissed`.
 
 ### `extensions/subagents` + `skills/subagents`
 
-Runs up to four background agents through Pi, Claude Code, or Codex while the parent keeps
+Runs up to 16 background agents through Pi, Claude Code, or Codex while the parent keeps
 working. The extension provides tools to spawn, check, list, wait for, and cancel children;
 completed results return automatically as follow-up messages. `/subagents` opens an interactive
 picker and takeover view, while `/btw` runs a one-off side question without adding its answer to
@@ -166,9 +167,9 @@ is included unchanged.
 ### `extensions/workflows`
 
 Runs model-authored, multi-phase Pi-agent pipelines through one `workflow` tool. A restricted
-JavaScript orchestration script can sequence phases, fan out up to four isolated agents in
-parallel, require schema-validated results, select a model or thinking level per agent, and
-aggregate the outputs. Use it only when explicitly requesting a workflow or saying
+JavaScript orchestration script can sequence phases, fan out up to 16 isolated agents in
+parallel, make up to 128 agent calls, require schema-validated results, select a model or
+thinking level per agent, and aggregate the outputs. Use it only when explicitly requesting a workflow or saying
 `ultracode`; ordinary one-off delegation should continue to use the subagent tools.
 
 Runs can block with live progress or continue in the background. `/workflows` opens a dashboard

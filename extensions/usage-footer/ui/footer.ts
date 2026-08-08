@@ -5,7 +5,9 @@ export interface FooterViewModel {
 	modelId: string;
 	accountLabel: string;
 	statuses?: readonly string[];
-	/** Dispatcher-owned child cost, shown separately from the main session cost. */
+	/** Subagent/workflow activity rendered on a dedicated row. */
+	agentStatuses?: readonly string[];
+	/** Dispatcher-owned child cost, rendered with agent activity. */
 	subagentCostUsd?: number;
 	contextTokens?: number;
 	contextWindowTokens?: number;
@@ -57,6 +59,7 @@ function joined(parts: string[], theme: ThemeLike): string {
 export function renderFooterLines(view: FooterViewModel, width: number, theme: ThemeLike): string[] {
 	const fullIdentity = theme.fg("accent", `Model: ${view.modelId} · ${view.accountLabel}`);
 	const statuses = view.statuses?.join(theme.fg("dim", " · ")) ?? "";
+	const agentStatuses = view.agentStatuses?.join(theme.fg("dim", " · ")) ?? "";
 	const cost = costText(view.cost, theme);
 	const subagentCost = view.subagentCostUsd === undefined
 		? ""
@@ -64,21 +67,13 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const usage = usageText(view.usage, theme);
 	const compactUsage = usageText(view.usage, theme, true);
 
-	let line1 = joined([fullIdentity, statuses, cost, subagentCost, usage], theme);
-	const reductions = subagentCost
-		? [
-			[fullIdentity, statuses, cost, subagentCost, compactUsage],
-			[fullIdentity, statuses, cost, subagentCost],
-			[fullIdentity, statuses, subagentCost],
-			[fullIdentity, statuses],
-			[fullIdentity],
-		]
-		: [
-			[fullIdentity, statuses, usage],
-			[fullIdentity, statuses, compactUsage],
-			[fullIdentity, statuses],
-			[fullIdentity],
-		];
+	let line1 = joined([fullIdentity, statuses, cost, usage], theme);
+	const reductions = [
+		[fullIdentity, statuses, usage],
+		[fullIdentity, statuses, compactUsage],
+		[fullIdentity, statuses],
+		[fullIdentity],
+	];
 	for (const reduced of reductions) {
 		if (visibleWidth(line1) <= width) break;
 		line1 = joined(reduced, theme);
@@ -102,5 +97,7 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 		line2 = joined(reduced, theme);
 	}
 	line2 = truncateToWidth(line2, width, "…");
-	return [line1, line2];
+
+	const agentLine = truncateToWidth(joined([agentStatuses, subagentCost], theme), width, "…");
+	return agentLine ? [line1, agentLine, line2] : [line1, line2];
 }

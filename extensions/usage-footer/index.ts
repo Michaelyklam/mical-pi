@@ -142,10 +142,17 @@ export default function usageFooter(pi: ExtensionAPI) {
 					const account = currentAccount;
 					if (!model || !account || !monitor) return [theme.fg("dim", "Usage footer loading…")];
 					const cost = ledger(ctx).summarize(ctx.sessionManager.getEntries() as any[], account);
+					const extensionStatuses = footerData.getExtensionStatuses();
+					const agentStatusKeys = new Set(["subagents", "workflows"]);
 					return renderFooterLines({
 						modelId: model.id,
 						accountLabel: account.label ?? account.suggestedLabel ?? account.providerId,
-						statuses: [...footerData.getExtensionStatuses().values()],
+						statuses: [...extensionStatuses]
+							.filter(([key]) => !agentStatusKeys.has(key))
+							.map(([, value]) => value),
+						agentStatuses: [...extensionStatuses]
+							.filter(([key]) => agentStatusKeys.has(key))
+							.map(([, value]) => value),
 						subagentCostUsd,
 						contextTokens: ctx.getContextUsage()?.tokens ?? undefined,
 						contextWindowTokens: model.contextWindow,

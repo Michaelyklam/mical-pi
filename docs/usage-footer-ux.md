@@ -2,12 +2,15 @@
 
 ## Footer
 
-The footer remains two lines and follows Pi's active theme rather than using the legacy hard-coded ccstatusline ANSI palette.
+The footer has two base rows and adds a dedicated child-agent row whenever subagent/workflow activity or child cost is present. It follows Pi's active theme rather than using the legacy hard-coded ccstatusline ANSI palette.
 
 ```text
-Model: openai-codex/gpt-5.6-sol · personal | Ctx: 72.5k | ⎇ main | (+12,-4)
-Est: ~$0.33 | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
+Model: openai-codex/gpt-5.6-sol · personal | Est: ~$0.33 | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
+subagents: ■ 12 running · /subagents to view | workflows: ■ 2 running · /workflows to view | [Subagents: $0.13]
+Ctx: 72.5k/371k | ⎇ main | (+12,-4)
 ```
+
+The agent row is placed directly below model information so a large fan-out cannot displace model, account, cost, or allowance data. It includes both `/subagents` and `/workflows` activity plus the aggregate child cost. When all three are absent, omit the row.
 
 Provider, model, and friendly account label are always shown when space permits. On very narrow terminals, preserve provider and account while truncating the model:
 
@@ -52,7 +55,7 @@ The local label alone communicates degraded scope; endpoint errors stay in `/usa
 
 ### Responsive priority
 
-Preserve account/model identity and Usage longest. As width shrinks, remove git diff, branch, context, and cost detail before truncating identity or allowance status. If only one allowance window fits, show the most utilized window.
+Preserve account/model identity and Usage longest. Subagent/workflow activity truncates independently on its dedicated row and cannot consume model-row capacity. As width shrinks, remove git diff, branch, context, and cost detail before truncating identity or allowance status. If only one allowance window fits, show the most utilized window.
 
 ## Account labels
 

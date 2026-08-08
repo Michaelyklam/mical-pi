@@ -1,5 +1,5 @@
-const DEFAULT_CONCURRENCY = 4;
-export const MAX_AGENT_CALLS = 32;
+const DEFAULT_CONCURRENCY = 16;
+export const MAX_AGENT_CALLS = 128;
 export const RUN_SHUTDOWN_TIMEOUT_MS = 8_000;
 
 function abortError(signal: AbortSignal) {

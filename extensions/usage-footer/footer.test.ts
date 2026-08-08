@@ -30,9 +30,18 @@ test("wide footer puts model, status, cost, and usage above context and git meta
 	assert.match(lines[1]!, /^Ctx: 72\.5k\/371k.*⎇ main.*\(\+12,-4\)/);
 });
 
-test("wide footer shows dispatcher and subagent costs as separate sections", () => {
-	const lines = renderFooterLines({ ...base, subagentCostUsd: 0.127 }, 140, theme);
-	assert.match(lines[0]!, /Est: ~\$0\.33.*\[Subagents: \$0\.13\]/);
+test("subagent and workflow activity gets a dedicated row below model information", () => {
+	const lines = renderFooterLines({
+		...base,
+		statuses: ["⚡ fast"],
+		agentStatuses: ["subagents: 12 running", "workflows: 2 running"],
+		subagentCostUsd: 0.127,
+	}, 140, theme);
+	assert.equal(lines.length, 3);
+	assert.match(lines[0]!, /^Model: gpt-5\.6-sol · personal.*⚡ fast.*Est: ~\$0\.33/);
+	assert.doesNotMatch(lines[0]!, /subagents|workflows|Subagents:/i);
+	assert.match(lines[1]!, /subagents: 12 running.*workflows: 2 running.*\[Subagents: \$0\.13\]/);
+	assert.match(lines[2]!, /^Ctx: 72\.5k\/371k.*⎇ main.*\(\+12,-4\)/);
 });
 
 test("constrained footer prioritizes extension statuses and context over optional details", () => {

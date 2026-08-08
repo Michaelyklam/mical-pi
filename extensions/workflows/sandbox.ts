@@ -8,7 +8,7 @@ const MAX_SOURCE_BYTES = 512 * 1024;
 const MAX_ARGS_BYTES = 256 * 1024;
 const MAX_RESULT_BYTES = 1024 * 1024;
 const MAX_AGENT_MESSAGE_BYTES = 512 * 1024;
-const MAX_AGENT_REQUESTS = 32;
+const MAX_AGENT_REQUESTS = 128;
 
 export interface SandboxAgentOptions {
   label?: unknown;
