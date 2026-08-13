@@ -25,7 +25,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "npm run test:usage-footer && npm run test:subagents && npm run test:workflows",
+    "test": "npm run test:live-time && npm run test:usage-footer && npm run test:subagents && npm run test:workflows",
+    "test:live-time": "tsx --test \"extensions/live-time/**/*.test.ts\"",
     "test:usage-footer": "tsx --test \"extensions/usage-footer/**/*.test.ts\"",
     "test:subagents": "npm --prefix extensions/subagents test",
     "test:workflows": "node --test --experimental-strip-types extensions/workflows/*.test.ts"

@@ -43,6 +43,19 @@ Adds `/fast [on|off|status]` for GPT-5.6 requests through the OpenAI and OpenAI 
 
 Fast mode uses the same model with accelerated API processing and premium token pricing. OpenAI guarantees the tier on its pay-as-you-go API; the ChatGPT OAuth backend may ignore or downgrade it.
 
+### `extensions/live-time`
+
+Replaces Pi's static `Working...` message during an active agent run with a live,
+zero-padded elapsed timer:
+
+```
+Working for 00:02:17
+```
+
+The timer starts when the agent begins and continues across automatic retries and compaction.
+After the agent settles, a durable `Turn took 00:02:17` line is added to the transcript.
+Pi's existing spinner remains unchanged.
+
 ### `extensions/usage-footer`
 
 Replaces Pi's built-in footer with an account-aware model, cost, and allowance display:
