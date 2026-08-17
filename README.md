@@ -199,6 +199,60 @@ context-utilization helpers. One local fix keeps the first-response watchdog tim
 until it settles; upstream's unreferenced timer allows Node 22's test runner to exit before the
 watchdog fires. `acorn` is required at runtime to parse workflow metadata without evaluating it.
 
+## `scripts/update-agent-browser.sh`
+
+Lockstep updater for browser automation. Keeps us current on upstream without
+letting the two halves drift apart.
+
+```bash
+./scripts/update-agent-browser.sh --check   # report only
+./scripts/update-agent-browser.sh           # update both, verify, roll back on failure
+```
+
+Browser automation is **two packages in two different package managers**:
+
+| Component | Role | Lives in |
+|---|---|---|
+| `pi-agent-browser-native` | pi extension, exposes the `agent_browser` tool | `~/.pi/agent/npm/` (pi package) |
+| `agent-browser` | the actual headless browser engine (`vercel-labs/agent-browser`) | global npm, `~/.local/bin` |
+
+Each wrapper release targets **one exact** upstream version and explicitly ships no
+backwards-compatibility shims. Current pair: wrapper **0.3.0** + upstream **0.33.2**.
+
+Two consequences:
+
+- **`pi update` cannot do this job.** It knows nothing about the global `agent-browser`
+  binary, so it moves the wrapper alone and breaks the pair.
+- **Don't install upstream `@latest`.** At time of writing latest was 0.34.0, which the
+  wrapper rejects outright. The wrapper's own
+  `scripts/agent-browser-capability-baseline.mjs` (`CAPABILITY_BASELINE.targetVersion`)
+  is the source of truth; the script reads it rather than guessing.
+
+The wrapper is therefore **pinned** in `settings.json` (`npm:pi-agent-browser-native@0.3.0`).
+Pinned specs are skipped by `pi update --extensions`, which is deliberate — updates go
+through this script so both halves move together and get verified before being kept.
+
+The script installs the wrapper, reads its new baseline, installs the matching upstream,
+runs the wrapper doctor, and **rolls both back** if the doctor fails.
+
+### Gotcha: a repo-local `pi` shadows the real CLI
+
+`pi-agent-browser-doctor` shells out to `pi` and enforces a minimum version. Both
+`npm run` and `npm exec` prepend `node_modules/.bin` to `PATH`, so a repo with its own
+pinned pi wins over the installed CLI and the doctor reports a false
+"Pi 0.84.0 or newer is required".
+
+This is not hypothetical — the installed CLI is 0.84.2, but:
+
+| Repo | Local `node_modules/.bin/pi` |
+|---|---|
+| `mical-pi` (this one) | 0.82.1 |
+| `~/Coding/Linny` | 0.81.1 |
+
+`cd $HOME` does **not** fix it, because the stale entry is on `PATH` before the chdir.
+The script strips every `node_modules/.bin` entry from `PATH` before running the doctor.
+Verified green from `mical-pi` directly, via `npm run`, from `~/Coding/Linny`, and from `$HOME`.
+
 ## Development
 
 ```bash
@@ -215,5 +269,7 @@ Edit → `/reload` in a running pi session. No reinstall needed with the local-p
 ## Not in this repo
 
 - `~/.pi/agent/settings.json` — mostly machine state (`lastChangelogVersion`).
+  Exception worth knowing: it also holds the `packages` list and the
+  `pi-agent-browser-native` version pin. Losing it loses that pin.
 - `~/.pi/agent/auth.json`, `models-store.json`, `sessions/` — credentials and history. Never commit these.
 - API keys and other secrets.
