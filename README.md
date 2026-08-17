@@ -37,6 +37,12 @@ Enable/disable individual resources with `pi config` (Tab switches global vs pro
 
 Personal development skills shared between Pi and Claude Code. Pi discovers them through this package; `~/.claude/skills` points to this directory for Claude Code. Standalone third-party skills are tracked in `.github/skill-sources.json` and checked weekly by `.github/workflows/sync-external-skills.yml`. Marketplace-published skill collections, including Matt Pocock's skills, are installed and updated through `extensions/claude-plugin-receiver` instead of being copied into this directory.
 
+### `extensions/effort`
+
+Adds `/effort`, an interactive picker for the reasoning levels supported by the current model.
+The picker uses Pi's model metadata, so unsupported levels stay hidden. Select a level in the
+picker, or set one directly with `/effort high`.
+
 ### `extensions/fast-mode`
 
 Adds `/fast [on|off|status]` for GPT-5.6 requests through the OpenAI and OpenAI Codex providers. When enabled, outgoing requests include `service_tier: "priority"` (OpenAI's backward-compatible name for Fast mode); a `⚡ fast` footer status indicates that requests for the selected model are being marked Fast. The setting is retained in the current session and defaults off in new sessions.
