@@ -158,6 +158,27 @@ into the UI promise and to tell interruption from real failure. That's a few lin
 `AbortController` here, so this port stays dependency-free. Behavior is identical — including
 abort-mid-popup reporting `Cancelled` rather than `dismissed`.
 
+### `extensions/claude-plugin-receiver`
+
+Receives the skills section of Claude Code plugin marketplaces without depending on Claude's
+private cache. Add a marketplace with `/marketplace add owner/repo`, then inspect and subscribe
+to one plugin with `/plugin-install name@marketplace`. Installation shows the exact curated
+skills and source commit before confirmation.
+
+Installed subscriptions are checked asynchronously on every interactive Pi startup. Updates are
+validated into immutable, Pi-owned cache versions, promoted atomically, and activated only after
+`/reload` or restart; the previous loaded tree remains intact. The first TUI session loading a
+new version shows a generated changelog once, including added, modified, and removed skills.
+Offline and failed checks retain the last valid cache, concurrent Pi sessions share locks, and
+plugins that declare Claude commands, agents, hooks, MCP/LSP servers, binaries, or other
+non-skill components fail closed rather than being partially installed.
+
+Commands: `/marketplace`, `/plugin-install`, `/plugin-update`, `/plugin-list`, `/plugin-rollback`,
+`/plugin-remove`, and `/plugin-pause`. State lives under `~/.pi/agent/claude-plugins/` (or Pi's configured agent
+directory). Design and primary-source research are in
+[`docs/plans/claude-plugin-receiver.md`](docs/plans/claude-plugin-receiver.md) and
+[`docs/research/claude-code-plugin-receiver.md`](docs/research/claude-code-plugin-receiver.md).
+
 ### `extensions/subagents` + `skills/subagents`
 
 Runs up to 16 background agents through Pi, Claude Code, or Codex while the parent keeps
