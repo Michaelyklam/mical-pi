@@ -43,6 +43,26 @@ Adds `/effort`, an interactive picker for the reasoning levels supported by the 
 The picker uses Pi's model metadata, so unsupported levels stay hidden. Select a level in the
 picker, or set one directly with `/effort high`.
 
+### `extensions/mcp-health`
+
+Replaces the persistent MCP footer entry with a silent-until-broken one. Shows nothing while
+servers are healthy; when one is not, names it — `MCP: hex failed 12s ago`, `MCP: hex needs auth`.
+
+Reads `pi-mcp-adapter`'s snapshot off pi's shared event bus
+(`pi-mcp-adapter/status/v1`) and renders under its own `mcp-health` footer key. Requires
+`settings.mcpFooterStatus: "off"` in the MCP config so the adapter's own footer does not render
+alongside it; the adapter publishes its snapshot before honouring that setting, so turning the
+footer off does not suppress the events this depends on.
+
+**`cached` and `not-connected` count as healthy.** The adapter connects lazily, so a configured
+server sits at `cached` (metadata cached, dials on first tool call) until it is actually used.
+Treating "not currently connected" as a fault would leave the footer visible permanently, which
+is the opposite of the point. Only `failed` and `needs-auth` are faults.
+
+Unhealthy is matched as "not in the known-healthy set" rather than as a list of failure states,
+so if the adapter renames or adds a failure status it surfaces in the footer as an unfamiliar
+word instead of the indicator silently going quiet.
+
 ### `extensions/fast-mode`
 
 Adds `/fast [on|off|status]` for GPT-5.6 requests through the OpenAI and OpenAI Codex providers. When enabled, outgoing requests include `service_tier: "priority"` (OpenAI's backward-compatible name for Fast mode); a `⚡ fast` footer status indicates that requests for the selected model are being marked Fast. The setting is retained in the current session and defaults off in new sessions.
