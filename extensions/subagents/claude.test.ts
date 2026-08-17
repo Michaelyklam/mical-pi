@@ -9,6 +9,7 @@ import { createSubagentRuntime, runTool } from "./src/runtime.ts";
 const parent: ParentContext = {
   parentCwd: process.cwd(),
   projectTrusted: false,
+  inheritedModel: { provider: "anthropic", id: "claude-haiku-4-5" },
 };
 
 function task(prompt: string): SpawnTask {

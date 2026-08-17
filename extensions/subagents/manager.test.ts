@@ -48,13 +48,16 @@ const createTestRuntime = () =>
     SubagentManagerLive.pipe(Layer.provide(TestRegistryLive)),
   );
 
-const parent: ParentContext = {
-  parentCwd: process.cwd(),
-  projectTrusted: false,
-};
+function parent(provider: string): ParentContext {
+  return {
+    parentCwd: process.cwd(),
+    projectTrusted: false,
+    inheritedModel: { provider, id: "test-parent" },
+  };
+}
 
-function task(prompt: string): SpawnTask {
-  return { prompt, title: "test", cwd: process.cwd(), parent };
+function task(prompt: string, provider = "openai-codex"): SpawnTask {
+  return { prompt, title: "test", cwd: process.cwd(), parent: parent(provider) };
 }
 
 async function withManager(
@@ -81,7 +84,7 @@ test("stub subagent completes and delivers a final result", async () => {
 
     const snap = await runTool(
       runtime,
-      manager.spawn("claude", task("Say hello to the tests")),
+      manager.spawn("claude", task("Say hello to the tests", "anthropic")),
     );
     assert.equal(snap.status, "running");
     assert.equal(snap.backend, "claude");
@@ -129,7 +132,7 @@ test("cancel interrupts a running stub subagent", async () => {
   await withManager(async (manager, runtime) => {
     const snap = await runTool(
       runtime,
-      manager.spawn("claude", task("Long running task")),
+      manager.spawn("claude", task("Long running task", "anthropic")),
     );
     const report = await runTool(runtime, manager.cancel([snap.id]));
     assert.deepEqual(report, [
@@ -152,7 +155,10 @@ test("spawn origin propagates to ids, snapshots, and settlement", async () => {
     );
     const btw = await runTool(
       runtime,
-      manager.spawn("claude", { ...task("side question"), origin: "btw" }),
+      manager.spawn("claude", {
+        ...task("side question", "anthropic"),
+        origin: "btw",
+      }),
     );
 
     assert.match(model.id, /^sa-/);
@@ -215,6 +221,40 @@ test("the concurrency cap rejects a 17th running subagent", async () => {
   });
 });
 
+test("cross-provider native harnesses fail before consuming a slot", async () => {
+  await withManager(async (manager, runtime) => {
+    await assert.rejects(
+      runTool(
+        runtime,
+        manager.spawn("codex", task("must not run", "anthropic")),
+      ),
+      /different provider billing route/,
+    );
+    const snap = await runTool(runtime, manager.spawn("codex", task("ok")));
+    assert.equal(snap.backend, "codex");
+  });
+});
+
+test("pi rejects an explicitly cross-provider model before session creation", async () => {
+  await withManager(async (manager, runtime) => {
+    const spawnTask = task("must not run", "anthropic");
+    await assert.rejects(
+      runTool(
+        runtime,
+        manager.spawn("pi", {
+          ...spawnTask,
+          model: "openai-codex/gpt-5.4",
+          parent: {
+            ...spawnTask.parent,
+            modelRegistry: { find: () => undefined } as never,
+          },
+        }),
+      ),
+      /does not match the parent provider/,
+    );
+  });
+});
+
 test("pi spawn fails fast without the parent model registry", async () => {
   await withManager(async (manager, runtime) => {
     await assert.rejects(
@@ -232,7 +272,7 @@ test("idle restarts respect the concurrency cap", async () => {
     // Settle one subagent, then fill all 16 slots with running ones.
     const settled = await runTool(
       runtime,
-      manager.spawn("claude", task("early finisher")),
+      manager.spawn("claude", task("early finisher", "anthropic")),
     );
     await runTool(runtime, manager.waitFor([settled.id]));
     await runTool(
@@ -256,7 +296,7 @@ test("send steers an idle subagent into another turn", async () => {
   await withManager(async (manager, runtime) => {
     const snap = await runTool(
       runtime,
-      manager.spawn("claude", task("First turn")),
+      manager.spawn("claude", task("First turn", "anthropic")),
     );
     await runTool(runtime, manager.waitFor([snap.id]));
     const afterFirst = manager.view.get(snap.id);

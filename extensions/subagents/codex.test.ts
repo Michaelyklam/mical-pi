@@ -9,6 +9,7 @@ import { createSubagentRuntime, runTool } from "./src/runtime.ts";
 const parent: ParentContext = {
   parentCwd: process.cwd(),
   projectTrusted: false,
+  inheritedModel: { provider: "openai-codex", id: "gpt-5.4" },
 };
 
 function task(prompt: string): SpawnTask {

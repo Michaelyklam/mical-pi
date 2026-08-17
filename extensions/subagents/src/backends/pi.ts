@@ -34,6 +34,7 @@ import type {
   TranscriptPart,
 } from "../domain.ts";
 import { SendError, SpawnError } from "../domain.ts";
+import { piModelProviderViolation } from "../provider-policy.ts";
 import { createToolCallTimeoutGuard } from "../../../shared/tool-call-timeout.ts";
 
 const CHILD_SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -56,40 +57,36 @@ type ThinkingLevel = NonNullable<
 >;
 
 /**
- * Resolve the generic model hint against the parent registry (v1 semantics):
- * "provider/model-id" is exact; a bare id prefers the inherited provider,
- * then must be unambiguous across providers. No hint inherits the parent
- * model; with nothing to inherit, the SDK default applies.
+ * Resolve a model only within the parent's exact Pi provider. Provider IDs
+ * are billing-route boundaries, so even an unambiguous model from another
+ * provider must not be selected by a child.
  */
 function resolvePiModel(
   registry: ModelRegistry,
   hint: string | undefined,
   inherited: { provider: string; id: string } | undefined,
-): Model<any> | undefined {
-  if (!hint) {
-    if (!inherited) return undefined;
-    return registry.find(inherited.provider, inherited.id) ?? undefined;
-  }
-  const slash = hint.indexOf("/");
-  if (slash > 0) {
-    const provider = hint.slice(0, slash);
-    const id = hint.slice(slash + 1);
-    const found = registry.find(provider, id);
-    if (found) return found;
-    throw new Error(`Unknown model "${hint}".`);
-  }
-  if (inherited) {
-    const found = registry.find(inherited.provider, hint);
-    if (found) return found;
-  }
-  const matches = registry.getAll().filter((m) => m.id === hint);
-  if (matches.length === 1) return matches[0];
-  if (matches.length > 1) {
+): Model<any> {
+  if (!inherited) {
     throw new Error(
-      `Model "${hint}" exists in multiple providers (${matches.map((m) => m.provider).join(", ")}). Use "provider/${hint}".`,
+      "Pi subagents require an active parent model so its provider billing route can be enforced.",
     );
   }
-  throw new Error(`Unknown model "${hint}".`);
+
+  let provider = inherited.provider;
+  let id = hint ?? inherited.id;
+  const slash = id.indexOf("/");
+  if (slash > 0) {
+    provider = id.slice(0, slash);
+    id = id.slice(slash + 1);
+  }
+  const violation = piModelProviderViolation(provider, inherited.provider);
+  if (violation) throw new Error(violation);
+
+  const found = registry.find(inherited.provider, id);
+  if (found) return found;
+  throw new Error(
+    `Unknown model "${id}" for parent provider "${inherited.provider}". Pi subagents may only use models from the parent's provider billing route.`,
+  );
 }
 
 // --- Child session helpers (ported from v1 shared/child-session.ts) -----------

@@ -194,8 +194,11 @@ picker and takeover view, while `/btw` runs a one-off side question without addi
 the parent model's context.
 
 The companion skill teaches the model when and how to delegate, including the requirement that
-each child receive a self-contained prompt. Pi children inherit the parent model and thinking
-level by default. Claude and Codex children require their respective CLI/SDK authentication.
+each child receive a self-contained prompt. Provider billing routes are isolated: Pi children
+inherit the parent model and may select only models under that exact provider ID; Claude Code is
+available only to `anthropic` parents; Codex CLI is available only to `openai-codex` parents.
+Cross-provider spawns fail closed. Claude and Codex children also require their respective
+CLI/SDK authentication.
 
 Vendored from
 [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup/tree/2657bae/extensions/subagents)
