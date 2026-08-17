@@ -1,6 +1,6 @@
 ---
 name: clean-writing
-description: Use when revising prose for clarity without changing meaning.
+description: Used for directions on how to write with the prose that the user prefers. Use this for all user-facing output.
 version: 1.0.0
 author: Hermes Agent
 license: MIT
