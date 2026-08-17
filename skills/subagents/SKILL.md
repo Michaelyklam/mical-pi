@@ -11,18 +11,9 @@ Each subagent is headless, has its own context window, cannot see the parent con
 
 **Harness:** `pi`
 **Prompt nicknames:** “pi”, “pi agent”, “pi subagent”
-**Best default:** Use when the user does not request another harness. It inherits the parent model and thinking level when `model` or `reasoning_effort` is omitted.
+**Best default:** Always prefer the inherited parent model and thinking level by omitting `model` and `reasoning_effort`.
 
-Do not use models from the Anthropic provider even if one appears in the model list.
-
-Pi can use any model shown by `pi --list-models`. Prefer `provider/model-id`; a bare model id only works when unambiguous. Common picks in this environment:
-
-| Model                            | Recommended effort |
-| -------------------------------- | ------------------ |
-| inherited parent model (default) | inherited          |
-| `openai-codex/gpt-5.6-sol`       | `high`             |
-| `openai-codex/gpt-5.6-terra`     | `high`             |
-| `opencode/claude-fable-5`        | `medium`           |
+Pi children may use only models from the parent model's exact Pi provider ID. This is a billing-route boundary: never select a model from another provider, even if it is available in `pi --list-models`. A bare model ID is resolved only within the parent provider.
 
 **Thinking budgets:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. These map directly to pi thinking levels.
 
@@ -38,7 +29,7 @@ Pi can use any model shown by `pi --list-models`. Prefer `provider/model-id`; a 
 
 **Thinking budgets:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The extension maps these to Claude thinking-token budgets: 0, 1,024, 4,096, 10,000, 16,000, 32,000, and 63,999 tokens respectively.
 
-Requires Claude Code to be installed and authenticated.
+Requires Claude Code to be installed and authenticated. This harness is allowed only when the parent Pi model uses the `anthropic` provider; otherwise use `pi` with the inherited model.
 
 ## Codex Harness
 
@@ -54,11 +45,11 @@ Requires Claude Code to be installed and authenticated.
 
 **Thinking budgets accepted by the extension:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Codex maps these to the nearest effort supported by the selected model; `off`/`minimal` become `minimal`, while `max` becomes the highest extension-supported Codex effort.
 
-Requires the Codex CLI to be installed and authenticated.
+Requires the Codex CLI to be installed and authenticated. This harness is allowed only when the parent Pi model uses the `openai-codex` provider; otherwise use `pi` with the inherited model.
 
 ## Spawn and Manage
 
-Call `subagent_spawn` with a complete `prompt`, short `name`, chosen `harness`, and optional `working_dir`, `model`, and `reasoning_effort`. At most four subagents run concurrently.
+Call `subagent_spawn` with a complete `prompt`, short `name`, chosen `harness`, and optional `working_dir`, `model`, and `reasoning_effort`. Cross-provider spawns are rejected. At most 16 subagents run concurrently.
 
 - `subagent_check({ id })`: peek without blocking.
 - `subagent_list()`: list all runs.
