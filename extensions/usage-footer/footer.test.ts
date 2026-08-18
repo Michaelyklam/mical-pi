@@ -30,6 +30,31 @@ test("wide footer puts model, status, cost, and usage above context and git meta
 	assert.match(lines[1]!, /^Ctx: 72\.5k\/371k.*⎇ main.*\(\+12,-4\)/);
 });
 
+test("shows latest and session cache hit rates when provider telemetry exists", () => {
+	const lines = renderFooterLines({
+		...base,
+		cacheLatestHitPercent: 94.24,
+		cacheSessionHitPercent: 91.76,
+	}, 140, theme);
+	assert.match(lines[1]!, /Cache: 94\.2% latest · 91\.8% session/);
+});
+
+test("omits cache counters when provider telemetry is unavailable", () => {
+	const lines = renderFooterLines(base, 140, theme);
+	assert.doesNotMatch(lines[1]!, /Cache:/);
+});
+
+test("cache counters outrank git metadata when the footer is constrained", () => {
+	const lines = renderFooterLines({
+		...base,
+		cacheLatestHitPercent: 94.2,
+		cacheSessionHitPercent: 91.8,
+	}, 58, theme);
+	assert.match(lines[1]!, /^Ctx: 72\.5k\/371k.*Cache: 94\.2% latest · 91\.8% session$/);
+	assert.doesNotMatch(lines[1]!, /⎇ main|\(\+12,-4\)/);
+	for (const line of lines) assert.ok(visibleWidth(line) <= 58);
+});
+
 test("subagent and workflow activity gets a dedicated row below model information", () => {
 	const lines = renderFooterLines({
 		...base,

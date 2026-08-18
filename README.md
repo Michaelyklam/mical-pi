@@ -100,7 +100,7 @@ Replaces Pi's built-in footer with an account-aware model, cost, and allowance d
 ```
 Model: gpt-5.6-sol · personal | ⚡ fast | Est: ~$0.33 | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
 subagents: ■ 12 running · /subagents to view | workflows: ■ 2 running · /workflows to view | [Subagents: $0.13]
-Ctx: 72.5k/371k | ⎇ main | (+12,-4)
+Ctx: 72.5k/371k | Cache: 94.2% latest · 91.8% session | ⎇ main | (+12,-4)
 ```
 
 A **Provider Account** is a Pi provider plus its stable upstream account identity. Different
@@ -118,8 +118,13 @@ rotation does not fragment their history.
 - Failed account-wide data is marked stale for up to 30 minutes before local fallback.
 - Dispatcher and child-agent costs stay separate. Subagent/workflow activity and the
   bracketed aggregate for Pi, Claude Code, and Codex children use a dedicated row when present.
-- Responsive rendering preserves model/account identity, non-agent extension statuses, and
-  coding context before cost, allowance, and Git details.
+- Prompt-cache telemetry shows the latest main-conversation hit rate beside its session average.
+  It uses the provider-independent ratio `cacheRead / (input + cacheRead + cacheWrite)` and stays
+  hidden until the provider reports cache reads or writes. Tool, compaction, and branch-summary
+  model calls are excluded so nested work does not distort conversation-context caching. Use
+  `/session` for Pi's cumulative cached/uncached split and avoidable `Cache Re-billed` diagnostics.
+- Responsive rendering preserves model/account identity, non-agent extension statuses, context,
+  and cache rates before cost, allowance, and Git details.
 
 The extension follows Pi's theme and keeps `(+N,-M)` from staged plus unstaged Git shortstat.
 `/statusline` toggles the footer. `/usage` opens the interactive account dashboard; it can

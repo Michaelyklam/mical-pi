@@ -11,6 +11,10 @@ export interface FooterViewModel {
 	subagentCostUsd?: number;
 	contextTokens?: number;
 	contextWindowTokens?: number;
+	/** Main-conversation prompt cache hit rate for the most recent assistant request. */
+	cacheLatestHitPercent?: number;
+	/** Main-conversation prompt cache hit rate across this session. */
+	cacheSessionHitPercent?: number;
 	branch?: string | null;
 	git?: { insertions: number; deletions: number };
 	cost: Pick<SessionCostSummary, "reported" | "estimated" | "hasEstimatedUsage" | "hasUnpricedUsage">;
@@ -89,10 +93,13 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const contextUsed = view.contextTokens === undefined ? "?" : tokens(view.contextTokens);
 	const contextTotal = view.contextWindowTokens === undefined ? "?" : tokens(view.contextWindowTokens);
 	const context = theme.fg("dim", `Ctx: ${contextUsed}/${contextTotal}`);
+	const cache = view.cacheLatestHitPercent === undefined || view.cacheSessionHitPercent === undefined
+		? ""
+		: theme.fg("dim", `Cache: ${view.cacheLatestHitPercent.toFixed(1)}% latest · ${view.cacheSessionHitPercent.toFixed(1)}% session`);
 	const branch = view.branch ? theme.fg("syntaxKeyword", `⎇ ${view.branch}`) : "";
 	const diff = view.git && (view.git.insertions || view.git.deletions) ? theme.fg("warning", `(+${view.git.insertions},-${view.git.deletions})`) : "";
-	let line2 = joined([context, branch, diff], theme);
-	for (const reduced of [[context, branch], [context]]) {
+	let line2 = joined([context, cache, branch, diff], theme);
+	for (const reduced of [[context, cache, branch], [context, cache], [context]]) {
 		if (visibleWidth(line2) <= width) break;
 		line2 = joined(reduced, theme);
 	}

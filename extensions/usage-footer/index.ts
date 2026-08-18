@@ -7,6 +7,7 @@ import { AccountCatalog } from "./account-catalog.ts";
 import { AccountDiscovery, nativeIdentityMatches, openAIIdentity } from "./account-discovery.ts";
 import { AnthropicUsageAdapter } from "./adapters/anthropic.ts";
 import { CodexUsageAdapter } from "./adapters/codex.ts";
+import { computePromptCacheMetrics } from "./cache-metrics.ts";
 import type { AccountObservation, AttributionRecord, ProviderAccount } from "./domain.ts";
 import { LocalUsageIndex } from "./local-usage.ts";
 import { JsonAccountCatalogStore, JsonSnapshotStore, withFileLock } from "./persistence.ts";
@@ -141,7 +142,9 @@ export default function usageFooter(pi: ExtensionAPI) {
 					const model = ctx.model;
 					const account = currentAccount;
 					if (!model || !account || !monitor) return [theme.fg("dim", "Usage footer loading…")];
-					const cost = ledger(ctx).summarize(ctx.sessionManager.getEntries() as any[], account);
+					const entries = ctx.sessionManager.getEntries();
+					const cost = ledger(ctx).summarize(entries as any[], account);
+					const cache = computePromptCacheMetrics(entries);
 					const extensionStatuses = footerData.getExtensionStatuses();
 					const agentStatusKeys = new Set(["subagents", "workflows"]);
 					return renderFooterLines({
@@ -156,6 +159,8 @@ export default function usageFooter(pi: ExtensionAPI) {
 						subagentCostUsd,
 						contextTokens: ctx.getContextUsage()?.tokens ?? undefined,
 						contextWindowTokens: model.contextWindow,
+						cacheLatestHitPercent: cache?.latestHitPercent,
+						cacheSessionHitPercent: cache?.sessionHitPercent,
 						branch: footerData.getGitBranch(),
 						git,
 						cost,
