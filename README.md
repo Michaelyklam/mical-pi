@@ -63,6 +63,17 @@ Unhealthy is matched as "not in the known-healthy set" rather than as a list of 
 so if the adapter renames or adds a failure status it surfaces in the footer as an unfamiliar
 word instead of the indicator silently going quiet.
 
+### `extensions/session-aliases`
+
+Adds `/clear` as an alias for pi's built-in `/new` command. It uses
+`ExtensionCommandContext.newSession()` rather than editing session storage directly, so it follows
+pi's normal replacement lifecycle: extensions can cancel through `session_before_switch`, the old
+runtime receives `session_shutdown`, and a fresh session starts with resources reloaded. The prior
+session remains saved and available through `/resume`.
+
+`/clear` accepts no arguments. Any argument produces a usage warning instead of being silently
+lost.
+
 ### `extensions/fast-mode`
 
 Adds `/fast [on|off|status]` for GPT-5.6 requests through the OpenAI and OpenAI Codex providers. When enabled, outgoing requests include `service_tier: "priority"` (OpenAI's backward-compatible name for Fast mode); a `⚡ fast` footer status indicates that requests for the selected model are being marked Fast. The setting is retained in the current session and defaults off in new sessions.

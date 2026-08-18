@@ -27,13 +27,14 @@
     "typecheck": "tsc -p tsconfig.json",
     "update:browser": "./scripts/update-agent-browser.sh",
     "check:browser": "./scripts/update-agent-browser.sh --check",
-    "test": "npm run test:live-time && npm run test:effort && npm run test:usage-footer && npm run test:subagents && npm run test:plugin-receiver && npm run test:mcp-health && npm run test:workflows",
+    "test": "npm run test:live-time && npm run test:effort && npm run test:usage-footer && npm run test:subagents && npm run test:plugin-receiver && npm run test:mcp-health && npm run test:session-aliases && npm run test:workflows",
     "test:live-time": "tsx --test \"extensions/live-time/**/*.test.ts\"",
     "test:effort": "tsx --test \"extensions/effort/**/*.test.ts\"",
     "test:usage-footer": "tsx --test \"extensions/usage-footer/**/*.test.ts\"",
     "test:subagents": "npm --prefix extensions/subagents test",
     "test:plugin-receiver": "tsx --test \"extensions/claude-plugin-receiver/**/*.test.ts\"",
     "test:mcp-health": "tsx --test \"extensions/mcp-health/**/*.test.ts\"",
+    "test:session-aliases": "tsx --test \"extensions/session-aliases/**/*.test.ts\"",
     "test:workflows": "node --test --experimental-strip-types extensions/workflows/*.test.ts"
   },
   "dependencies": {
