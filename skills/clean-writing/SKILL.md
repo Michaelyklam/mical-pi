@@ -1,22 +1,16 @@
 ---
 name: clean-writing
-description: Used for directions on how to write with the prose that the user prefers. Must always apply to all user-facing output, including chat replies.
+description: Must always apply to all user-facing output, including chat replies.
 version: 2.0.0
-author: Hermes Agent
-license: MIT
-metadata:
-  hermes:
-    tags: [writing, editing, clarity]
-    related_skills: [humanizer]
+author: Michael Lam
 ---
 
 # Clean writing
-
-Applies to everything the user reads: documents, PRs, emails, reports, and chat replies.
+This skill is designed to adjust the output prose to the user's preference. Use the rules given here to guide all output.
 
 ## Process
 
-1. Route: select and load exactly one style.
+1. Route: determine which style is needed for the output you are producing.
 2. Load `references/ai-tells.txt`. It always applies and no style may override it.
 3. Apply soul (below).
 4. Write or edit.
@@ -25,7 +19,7 @@ Applies to everything the user reads: documents, PRs, emails, reports, and chat 
 
 ## Styles
 
-- `references/controlled.txt`
+- `references/instructional.txt`
   Use when ambiguity can cause an incorrect action: procedures, runbooks,
   error messages, API requirements, agent instructions, and acceptance criteria.
 
@@ -35,15 +29,15 @@ Applies to everything the user reads: documents, PRs, emails, reports, and chat 
 
 - `references/natural.txt`
   Use when voice matters: email, proposals, essays, marketing, ministry,
-  personal writing, and customer communication.
+  personal writing, and customer communication. Optimized for understanding.
 
-Chat replies default to the technical style.
+Chat replies default to the natural style.
 
 Do not combine styles unless the user requests it.
 
 ## Soul
 
-Removing AI patterns is half the job. Sterile, voiceless writing is just as obvious. Soul applies globally, with one exception: when writing in the controlled style, controlled.txt's precision rules win wherever they conflict with soul.
+Removing AI patterns is half the job. Sterile, voiceless writing is just as obvious. Soul applies globally, with one exception: when writing in the instructional style, instructional.txt's precision rules win wherever they conflict with soul.
 
 - **Have opinions.** React to facts instead of neutrally listing pros and cons.
 - **Vary rhythm.** Short sentences. Then longer ones that take their time. Mix it up.
