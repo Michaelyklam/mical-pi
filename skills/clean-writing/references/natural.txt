@@ -6,10 +6,7 @@ Remove accidental AI patterns without flattening the writer's voice.
 - Prefer specific observations to generic abstractions.
 - Remove repetition only when it adds no meaning or emphasis.
 - Remove chatbot artifacts and empty promotional language.
-- Do not impose fixed sentence-length or vocabulary limits.
-- Do not categorically ban punctuation, metaphors, rhetorical questions,
-  fragments, or phrasal verbs.
 - Match an available voice sample before applying generic preferences.
 
 If clarity and personality conflict, preserve the intended voice unless the
-meaning becomes ambiguous.
+meaning becomes ambiguous. The rules in ai-tells.txt still apply in full.

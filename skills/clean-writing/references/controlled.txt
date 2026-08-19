@@ -11,3 +11,6 @@ Use precision over personality.
 - Avoid figurative, promotional, or conversational language.
 - State the expected result and how to verify it.
 - Preserve every prerequisite, warning, exception, and failure condition.
+
+Soul yields to this file. Where an opinion, first person, or deliberate
+looseness could change what the reader does, precision wins.
