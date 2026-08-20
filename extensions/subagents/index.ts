@@ -36,11 +36,16 @@ import {
   getAgentDir,
   getMarkdownTheme,
   ProjectTrustStore,
+  sessionEntryToContextMessages,
   truncateHead,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { deriveBtwTitle, isModelVisible } from "./src/by-the-way.ts";
+import {
+  cloneBtwParentMessages,
+  deriveBtwTitle,
+  isModelVisible,
+} from "./src/by-the-way.ts";
 import {
   BACKEND_NAMES,
   formatElapsed,
@@ -699,6 +704,11 @@ export default function (pi: ExtensionAPI) {
           prompt,
           title: deriveBtwTitle(prompt),
           cwd: ctx.cwd,
+          initialMessages: cloneBtwParentMessages(
+            ctx.sessionManager
+              .buildContextEntries()
+              .flatMap(sessionEntryToContextMessages),
+          ),
           parent: {
             parentCwd: ctx.cwd,
             projectTrusted: ctx.isProjectTrusted(),

@@ -226,8 +226,11 @@ directory). Design and primary-source research are in
 Runs up to 16 background agents through Pi, Claude Code, or Codex while the parent keeps
 working. The extension provides tools to spawn, check, list, wait for, and cancel children;
 completed results return automatically as follow-up messages. `/subagents` opens an interactive
-picker and takeover view, while `/btw` runs a one-off side question without adding its answer to
-the parent model's context.
+picker and takeover view. `/btw` runs a one-off side question seeded with the parent's current,
+compaction-aware active branch, including prior tool calls and results. The copied history is
+stored in the child session for takeover and later resume, but the child's answer stays out of the
+parent model's context. If `/btw` is opened while the parent is streaming, the snapshot includes
+only messages persisted when the command starts.
 
 The companion skill teaches the model when and how to delegate, including the requirement that
 each child receive a self-contained prompt. Provider billing routes are isolated: Pi children

@@ -7,6 +7,7 @@
  * normalized `SubagentEvent` union.
  */
 
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { Data } from "effect";
 
@@ -52,6 +53,11 @@ export interface SpawnTask {
   readonly prompt: string;
   readonly title: string;
   readonly cwd: string;
+  /**
+   * Existing conversation messages to seed into the child session before the
+   * prompt. Used by /btw; normal model-spawned tasks remain self-contained.
+   */
+  readonly initialMessages?: ReadonlyArray<AgentMessage>;
   /**
    * Generic model hint, interpreted per backend:
    * pi: "provider/model-id" or bare model id; claude: model alias;

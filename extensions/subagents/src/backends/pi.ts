@@ -38,6 +38,7 @@ import { piModelProviderViolation } from "../provider-policy.ts";
 import { createToolCallTimeoutGuard } from "../../../shared/tool-call-timeout.ts";
 
 const CHILD_SHUTDOWN_TIMEOUT_MS = 5_000;
+const BTW_PARENT_CONTEXT_TYPE = "btw-parent-context";
 
 /** Tools that headless children must not receive. Everything else stays enabled. */
 const CHILD_EXCLUDED_TOOL_NAMES = [
@@ -100,6 +101,35 @@ async function createChildResources(cwd: string, projectTrusted: boolean) {
   const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
   await loader.reload();
   return { loader, settingsManager };
+}
+
+export function persistInitialMessages(
+  sessionManager: SessionManager,
+  messages: NonNullable<SpawnTask["initialMessages"]>,
+) {
+  for (const message of messages) {
+    switch (message.role) {
+      case "user":
+      case "assistant":
+      case "toolResult":
+      case "custom":
+      case "bashExecution":
+        sessionManager.appendMessage(message);
+        break;
+      case "branchSummary":
+      case "compactionSummary":
+        // SessionManager reserves these roles for top-level summary entries and
+        // does not expose an append API for imported summaries. Persist an
+        // equivalent hidden context message so /resume keeps the information.
+        sessionManager.appendCustomMessageEntry(
+          BTW_PARENT_CONTEXT_TYPE,
+          `[Parent ${message.role}]\n${message.summary}`,
+          false,
+          { importedRole: message.role },
+        );
+        break;
+    }
+  }
 }
 
 function waitBounded(operation: Promise<unknown>, timeoutMs: number) {
@@ -282,15 +312,25 @@ const makePiSession = (
           task.cwd,
           task.parent.projectTrusted,
         );
+        const sessionManager = SessionManager.create(task.cwd);
+        if (task.initialMessages?.length) {
+          persistInitialMessages(sessionManager, task.initialMessages);
+        }
         const { session } = await createAgentSession({
           cwd: task.cwd,
-          sessionManager: SessionManager.create(task.cwd),
+          sessionManager,
           settingsManager,
           resourceLoader: loader,
           model,
           thinkingLevel,
           excludeTools: [...CHILD_EXCLUDED_TOOL_NAMES],
         });
+        if (task.initialMessages?.length) {
+          // Use the exact context roles for the live child. Imported summary
+          // roles are persisted as equivalent hidden messages only because the
+          // public SessionManager API cannot append those top-level entries.
+          session.agent.state.messages = [...task.initialMessages];
+        }
         // Start child extension session hooks/resources in headless mode.
         // A rejection here would otherwise leak the freshly created session:
         // the scope finalizer that owns cleanup is only registered later.
