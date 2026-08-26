@@ -2,7 +2,6 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AccountUsageView, AllowanceWindow, SessionCostSummary } from "../domain.ts";
 
 export interface FooterViewModel {
-	modelId: string;
 	accountLabel: string;
 	statuses?: readonly string[];
 	/** Subagent/workflow activity rendered on a dedicated row. */
@@ -61,7 +60,7 @@ function joined(parts: string[], theme: ThemeLike): string {
 }
 
 export function renderFooterLines(view: FooterViewModel, width: number, theme: ThemeLike): string[] {
-	const fullIdentity = theme.fg("accent", `Model: ${view.modelId} · ${view.accountLabel}`);
+	const accountIdentity = theme.fg("accent", view.accountLabel);
 	const statuses = view.statuses?.join(theme.fg("dim", " · ")) ?? "";
 	const agentStatuses = view.agentStatuses?.join(theme.fg("dim", " · ")) ?? "";
 	const cost = costText(view.cost, theme);
@@ -71,22 +70,19 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const usage = usageText(view.usage, theme);
 	const compactUsage = usageText(view.usage, theme, true);
 
-	let line1 = joined([fullIdentity, statuses, cost, usage], theme);
+	let line1 = joined([accountIdentity, statuses, cost, usage], theme);
 	const reductions = [
-		[fullIdentity, statuses, usage],
-		[fullIdentity, statuses, compactUsage],
-		[fullIdentity, statuses],
-		[fullIdentity],
+		[accountIdentity, statuses, usage],
+		[accountIdentity, statuses, compactUsage],
+		[accountIdentity, statuses],
+		[accountIdentity],
 	];
 	for (const reduced of reductions) {
 		if (visibleWidth(line1) <= width) break;
 		line1 = joined(reduced, theme);
 	}
 	if (visibleWidth(line1) > width) {
-		const suffix = ` · ${view.accountLabel}`;
-		const modelWidth = Math.max(1, width - visibleWidth(suffix));
-		const compactModel = modelWidth <= 1 ? "…" : truncateToWidth(view.modelId, modelWidth, "…");
-		line1 = theme.fg("accent", `${compactModel}${suffix}`);
+		line1 = theme.fg("accent", truncateToWidth(view.accountLabel, width, "…"));
 	}
 	line1 = truncateToWidth(line1, width, "…");
 

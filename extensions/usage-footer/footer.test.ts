@@ -5,7 +5,6 @@ import { renderFooterLines, type FooterViewModel } from "./ui/footer.ts";
 
 const theme = { fg: (_role: string, text: string) => text };
 const base: FooterViewModel = {
-	modelId: "gpt-5.6-sol",
 	accountLabel: "personal",
 	contextTokens: 72_500,
 	contextWindowTokens: 371_000,
@@ -21,11 +20,11 @@ const base: FooterViewModel = {
 	},
 };
 
-test("wide footer puts model, status, cost, and usage above context and git metadata", () => {
-	const lines = renderFooterLines({ ...base, statuses: ["⚡ fast"] }, 140, theme);
+test("wide footer puts account, status, cost, and usage above context and git metadata", () => {
+	const lines = renderFooterLines({ ...base, statuses: ["plugin warning"] }, 140, theme);
 	assert.equal(lines.length, 2);
-	assert.match(lines[0]!, /^Model: gpt-5\.6-sol · personal.*⚡ fast.*Est: ~\$0\.33/);
-	assert.doesNotMatch(lines[0]!, /openai-codex/);
+	assert.match(lines[0]!, /^personal.*plugin warning.*Est: ~\$0\.33/);
+	assert.doesNotMatch(lines[0]!, /Model:|gpt-5\.6-sol|openai-codex/);
 	assert.match(lines[0]!, /5h ██░░░ 43%.*7d █████ 91%/);
 	assert.match(lines[1]!, /^Ctx: 72\.5k\/371k.*⎇ main.*\(\+12,-4\)/);
 });
@@ -55,32 +54,32 @@ test("cache counters outrank git metadata when the footer is constrained", () =>
 	for (const line of lines) assert.ok(visibleWidth(line) <= 58);
 });
 
-test("subagent and workflow activity gets a dedicated row below model information", () => {
+test("subagent and workflow activity gets a dedicated row below account information", () => {
 	const lines = renderFooterLines({
 		...base,
-		statuses: ["⚡ fast"],
+		statuses: ["plugin warning"],
 		agentStatuses: ["subagents: 12 running", "workflows: 2 running"],
 		subagentCostUsd: 0.127,
 	}, 140, theme);
 	assert.equal(lines.length, 3);
-	assert.match(lines[0]!, /^Model: gpt-5\.6-sol · personal.*⚡ fast.*Est: ~\$0\.33/);
+	assert.match(lines[0]!, /^personal.*plugin warning.*Est: ~\$0\.33/);
 	assert.doesNotMatch(lines[0]!, /subagents|workflows|Subagents:/i);
 	assert.match(lines[1]!, /subagents: 12 running.*workflows: 2 running.*\[Subagents: \$0\.13\]/);
 	assert.match(lines[2]!, /^Ctx: 72\.5k\/371k.*⎇ main.*\(\+12,-4\)/);
 });
 
-test("constrained footer prioritizes extension statuses and context over optional details", () => {
-	const lines = renderFooterLines({ ...base, statuses: ["⚡ fast"] }, 58, theme);
-	assert.match(lines[0]!, /Model: gpt-5\.6-sol · personal.*⚡ fast/);
-	assert.doesNotMatch(lines[0]!, /Est:|Usage:/);
+test("constrained footer prioritizes extension statuses and compact usage over cost", () => {
+	const lines = renderFooterLines({ ...base, statuses: ["plugin warning"] }, 58, theme);
+	assert.match(lines[0]!, /personal.*plugin warning.*Usage: 7d █████ 91%/);
+	assert.doesNotMatch(lines[0]!, /Est:|5h/);
 	assert.match(lines[1]!, /Ctx: 72\.5k\/371k.*⎇ main.*\(\+12,-4\)/);
 	for (const line of lines) assert.ok(visibleWidth(line) <= 58);
 });
 
-test("narrow footer preserves model, account, and context", () => {
+test("narrow footer preserves account, compact usage, and context", () => {
 	const lines = renderFooterLines(base, 32, theme);
 	assert.equal(lines.length, 2);
-	assert.match(lines[0]!, /^Model: gpt-5\.6-sol · personal$/);
+	assert.match(lines[0]!, /^personal \| Usage: 7d █████ 91%$/);
 	assert.match(lines[1]!, /^Ctx: 72\.5k\/371k \| ⎇ main$/);
 	for (const line of lines) assert.ok(visibleWidth(line) <= 32);
 });

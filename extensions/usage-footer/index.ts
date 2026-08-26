@@ -3,6 +3,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { FAST_MODE_STATUS_KEY } from "../shared/fast-mode-status.ts";
 import { AccountCatalog } from "./account-catalog.ts";
 import { AccountDiscovery, nativeIdentityMatches, openAIIdentity } from "./account-discovery.ts";
 import { AnthropicUsageAdapter } from "./adapters/anthropic.ts";
@@ -148,10 +149,9 @@ export default function usageFooter(pi: ExtensionAPI) {
 					const extensionStatuses = footerData.getExtensionStatuses();
 					const agentStatusKeys = new Set(["subagents", "workflows"]);
 					return renderFooterLines({
-						modelId: model.id,
 						accountLabel: account.label ?? account.suggestedLabel ?? account.providerId,
 						statuses: [...extensionStatuses]
-							.filter(([key]) => !agentStatusKeys.has(key))
+							.filter(([key]) => !agentStatusKeys.has(key) && key !== FAST_MODE_STATUS_KEY)
 							.map(([, value]) => value),
 						agentStatuses: [...extensionStatuses]
 							.filter(([key]) => agentStatusKeys.has(key))

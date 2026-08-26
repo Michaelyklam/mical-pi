@@ -1,4 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	FAST_MODE_STATUS_EVENT,
+	FAST_MODE_STATUS_KEY,
+	type FastModeStatus,
+} from "../shared/fast-mode-status.ts";
 
 const STATE_ENTRY = "openai-fast-mode";
 const TARGET_PROVIDERS = new Set(["openai", "openai-codex"]);
@@ -18,7 +23,9 @@ export default function (pi: ExtensionAPI) {
 	let enabled = false;
 
 	function updateStatus(ctx: ExtensionContext): void {
-		ctx.ui.setStatus("openai-fast-mode", enabled && supportsFastMode(ctx) ? "⚡ fast" : undefined);
+		const active = enabled && supportsFastMode(ctx);
+		ctx.ui.setStatus(FAST_MODE_STATUS_KEY, active ? "⚡ fast" : undefined);
+		pi.events.emit(FAST_MODE_STATUS_EVENT, { active } satisfies FastModeStatus);
 	}
 
 	pi.on("session_start", (_event, ctx) => {
