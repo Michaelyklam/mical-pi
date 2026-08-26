@@ -6,6 +6,8 @@ author: Michael Lam
 ---
 
 # Clean writing
+Core value: text is cheap to generate and expensive to read. Every rule here exists to serve the reader, not the writer.
+
 This skill is designed to adjust the output prose to the user's preference. Use the rules given here to guide all output.
 
 ## Process
