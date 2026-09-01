@@ -52,9 +52,16 @@ Requires the Codex CLI to be installed and authenticated. This harness is allowe
 Call `subagent_spawn` with a complete `prompt`, short `name`, chosen `harness`, and optional `working_dir`, `model`, and `reasoning_effort`. Cross-provider spawns are rejected. At most 16 subagents run concurrently.
 
 - `subagent_check({ id })`: peek without blocking.
+- `subagent_send({ id, message })`: message a child. A running child gets it inside its current run on pi and Claude Code, and as its next turn on Codex; a settled child starts a new run on top of its existing context.
 - `subagent_list()`: list all runs.
 - `subagent_wait({ ids })`: block only when results are required to proceed.
 - `subagent_cancel({ ids })`: stop runs while preserving partial transcripts.
 - `/subagents`: inspect or take over a run interactively.
 
-Results return automatically. After spawning, continue useful parent work instead of immediately waiting.
+## Keep Working While Children Run
+
+A settled child's result is steered into the parent's running turn, so it lands between your tool calls rather than after you stop. Spawn, then keep doing parent work.
+
+`subagent_wait` parks the turn and the user cannot get a reply until it returns. Use it only when no further step is possible without the result. When a wait covers a result that already arrived, it reports a pointer instead of repeating the output.
+
+To check in on a child mid-flight, use `subagent_check` to read its progress and `subagent_send` to correct or narrow it. Prefer that over cancelling and respawning.

@@ -32,6 +32,7 @@ Source: `/Users/davis/.pi/agent/extensions/subagents/` (`index.ts`, `manager.ts`
 | `subagent_spawn` | `prompt`, `title`, `working_dir?`, `model?`, `provider?`, `reasoning_effort?` | Fire-and-forget spawn. Returns immediately with an id (`sa-N`). Enforces `MAX_RUNNING = 16` with a synchronous reservation so parallel tool calls can't race past the cap. Validates `working_dir`, resolves model against the registry (inherit parent model/thinking level by default), truncates title to 160 chars. |
 | `subagent_wait` | `ids[]` (max 64) | Blocks until all listed subagents settle; respects the tool `AbortSignal`; streams `Waiting for ...` via `onUpdate`. Marks the awaited results "consumed" so they are not also auto-delivered. Output budgets: 48KB total, 16KB per agent, with per-section fallbacks (`[omitted: ...]`). Errors on unknown ids (lists known ids). |
 | `subagent_cancel` | `ids[]` | Aborts running subagents (marks consumed first to avoid duplicate delivery), waits for settlement, reports per-id `Cancelled ...` / `was already <status>`. Partial transcripts remain on disk. |
+| `subagent_send` | `id`, `message` | Message a tracked subagent through `manager.send`. Steers a running child (pi/claude) or queues its next turn (codex); restarts a settled child on top of its existing context, subject to the running cap. Clears the delivered-result record for that id. |
 | `subagent_check` | `id` | Non-blocking peek: status line, turn count, error text, up to 2KB/20 lines of latest output (includes the live streaming assistant message). Does not consume the result. |
 | `subagent_list` | — | One `describeSubagent()` line per agent: `id [status] "title" (provider/model, ctx%, elapsed, cwd)`. |
 
@@ -64,6 +65,13 @@ the concurrency cap, and that children can't orchestrate/see the parent conversa
   `disposeAll()` on `session_shutdown`.
 
 ### 1.3 Result delivery back to the parent
+
+> **Superseded.** Delivery is now steer-based: `onSettled` sends the result immediately
+> with `deliverAs: "steer"`, so pi lands it between the parent's tool calls instead of
+> holding it until the parent goes idle. The buffer survives as a retry path for refused
+> sends (flushed on `agent_settled`) and now also records delivered ids, which lets a
+> later `subagent_wait` point at an already-delivered result instead of repeating it.
+> `subagent_send` clears that record because a restart produces a fresh result.
 
 - When a child settles **unconsumed**, `onSettled` defers it into a tiny
   `createDeferredResultDelivery` buffer (defer/consume/drain/clear keyed by id).

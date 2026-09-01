@@ -8,10 +8,12 @@
  * - subagent_wait: block until the listed subagents settle, return results.
  * - subagent_cancel: stop one or more running subagents.
  * - subagent_check: peek at a subagent's status and recent activity.
+ * - subagent_send: message a live or settled subagent (steer, correct, ask).
  * - subagent_list: list all subagents.
  *
- * Unawaited subagents queue their result as a follow-up message when they
- * settle. `/subagents` opens a picker + full interactive takeover view.
+ * Unawaited subagents steer their result into the parent's running turn when
+ * they settle, so the parent absorbs it between tool calls instead of having
+ * to sit idle. `/subagents` opens a picker + full interactive takeover view.
  *
  * Architecture: Effect v4 generators throughout (backends -> manager ->
  * runtime); this file is the async boundary where tool handlers run effects
@@ -59,13 +61,17 @@ import {
 } from "./src/format.ts";
 import { SubagentManager, type SubagentManagerShape } from "./src/manager.ts";
 import {
+  buildAlreadyDeliveredNotice,
   buildSubagentResultMessage,
+  buildSubagentSendResult,
   buildSubagentSpawnResult,
   SUBAGENT_CANCEL_PARAMETER_DESCRIPTIONS,
   SUBAGENT_CANCEL_TOOL_DESCRIPTION,
   SUBAGENT_CHECK_PARAMETER_DESCRIPTIONS,
   SUBAGENT_CHECK_TOOL_DESCRIPTION,
   SUBAGENT_LIST_TOOL_DESCRIPTION,
+  SUBAGENT_SEND_PARAMETER_DESCRIPTIONS,
+  SUBAGENT_SEND_TOOL_DESCRIPTION,
   SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS,
   SUBAGENT_SPAWN_PROMPT_GUIDELINES,
   SUBAGENT_SPAWN_PROMPT_SNIPPET,
@@ -189,22 +195,35 @@ export default function (pi: ExtensionAPI) {
     );
   };
 
+  /**
+   * Steer delivery: while the parent is streaming, pi holds this until the
+   * current assistant turn's tool calls finish and lands it before the next
+   * LLM call, so a child's result reaches a working parent instead of waiting
+   * for it to go idle. When the parent is idle, triggerTurn starts a turn.
+   */
   const deliverResult = (snap: SubagentSnapshot) => {
-    pi.sendMessage(
-      {
-        customType: "subagent-result",
-        content: buildSubagentResultMessage({
-          id: snap.id,
-          title: snap.title,
-          status: snap.status,
-          errorText: snap.errorText,
-          output: truncatedOutput(snap),
-        }),
-        display: true,
-        details: { id: snap.id, title: snap.title, status: snap.status },
-      },
-      { deliverAs: "followUp", triggerTurn: true },
-    );
+    try {
+      pi.sendMessage(
+        {
+          customType: "subagent-result",
+          content: buildSubagentResultMessage({
+            id: snap.id,
+            title: snap.title,
+            status: snap.status,
+            errorText: snap.errorText,
+            output: truncatedOutput(snap),
+          }),
+          display: true,
+          details: { id: snap.id, title: snap.title, status: snap.status },
+        },
+        { deliverAs: "steer", triggerTurn: true },
+      );
+      resultDelivery.markDelivered(snap.id);
+    } catch {
+      // The session refused the message (shutting down, or a transient send
+      // failure). Keep the result buffered so agent_settled retries it.
+      resultDelivery.defer(snap);
+    }
   };
 
   const flushResults = () => {
@@ -244,12 +263,9 @@ export default function (pi: ExtensionAPI) {
       resultDelivery.consume([snap.id]);
       return;
     }
-    // Keep the result retractable while the parent is working. A later
-    // subagent_wait can consume it before agent_settled flushes follow-ups.
-    // Defer a copy: the live snapshot keeps mutating if the subagent is
-    // restarted before the deferred result flushes.
-    resultDelivery.defer({ ...snap, meta: { ...snap.meta } });
-    if (sessionContext?.isIdle()) flushResults();
+    // Deliver a copy: the live snapshot keeps mutating if the subagent is
+    // restarted (subagent_send, takeover input) after this point.
+    deliverResult({ ...snap, meta: { ...snap.meta } });
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -257,6 +273,7 @@ export default function (pi: ExtensionAPI) {
     if (ctx.hasUI) ui = ctx.ui;
   });
 
+  // Retry anything steer delivery could not hand over at settle time.
   pi.on("agent_settled", flushResults);
 
   pi.on("session_shutdown", async () => {
@@ -411,7 +428,7 @@ export default function (pi: ExtensionAPI) {
       );
 
       // Settlement may have happened before this wait began. Remove any
-      // deferred automatic delivery now that the tool is returning the result.
+      // buffered retry now that the tool is returning the result.
       resultDelivery.consume(ids);
 
       const sections: string[] = [];
@@ -420,6 +437,18 @@ export default function (pi: ExtensionAPI) {
         const snap = manager.view.get(id);
         if (!snap) {
           sections.push(`## ${id}\n\n(no longer tracked)`);
+          continue;
+        }
+        // Settled before the wait started, so its output was already steered
+        // into this conversation. Point at it instead of duplicating it.
+        if (resultDelivery.wasDelivered(id)) {
+          sections.push(
+            buildAlreadyDeliveredNotice({
+              id: snap.id,
+              title: snap.title,
+              status: snap.status,
+            }),
+          );
           continue;
         }
         const verb = snap.status === "error" ? "failed" : "finished";
@@ -510,6 +539,64 @@ export default function (pi: ExtensionAPI) {
             title: entry.title,
             status: entry.status,
           })),
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "subagent_send",
+    label: "Message Subagent",
+    description: SUBAGENT_SEND_TOOL_DESCRIPTION,
+    parameters: Type.Object({
+      id: Type.String({
+        description: SUBAGENT_SEND_PARAMETER_DESCRIPTIONS.id,
+      }),
+      message: Type.String({
+        description: SUBAGENT_SEND_PARAMETER_DESCRIPTIONS.message,
+      }),
+    }),
+    async execute(_toolCallId, params, signal) {
+      const manager = await getManager();
+      const snap = manager.view.get(params.id);
+      if (!snap || !isModelVisible(snap)) {
+        const known = manager.view
+          .list()
+          .filter(isModelVisible)
+          .map((s) => s.id);
+        throw new Error(
+          `Unknown subagent id "${params.id}". Known: ${known.join(", ") || "none"}.`,
+        );
+      }
+      const message = params.message.trim();
+      if (!message) throw new Error("Provide a non-empty message.");
+
+      const wasRunning = snap.status === "running";
+      // Whatever this send produces is a new result, so drop the record of the
+      // previous one: a later wait must report the fresh output in full.
+      resultDelivery.forget(params.id);
+      await runTool(getRuntime(), manager.send(params.id, message), {
+        signal,
+        interruptMessage:
+          "Subagent send aborted. The message may or may not have been delivered.",
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: buildSubagentSendResult({
+              id: snap.id,
+              title: snap.title,
+              wasRunning,
+            }),
+          },
+        ],
+        details: {
+          id: snap.id,
+          title: snap.title,
+          status: snap.status,
+          wasRunning,
         },
       };
     },
