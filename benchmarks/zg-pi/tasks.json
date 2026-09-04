@@ -1,0 +1,59 @@
+[
+  {
+    "id": "youtube-submit-auto-queue",
+    "question": "Trace what happens when a guest submits a YouTube URL with a room code. Explain how the system handles an already-processed song versus a new processing job, and where the eventual automatic queue insertion happens. Cite the relevant source files.",
+    "requiredPaths": [
+      "backend/api/songs.py",
+      "convex/processingJobs.ts",
+      "backend/services/youtube_processing/pipeline.py"
+    ],
+    "concepts": ["already_processed", "submitOrJoin", "autoQueue", "queue:addToQueue"]
+  },
+  {
+    "id": "convex-playback-concurrency",
+    "question": "Explain how synchronized room playback prevents stale or competing clients from overwriting newer playback state. Cover writer sequencing, revision handling, and playback leadership or leases, with source citations.",
+    "requiredPaths": [
+      "convex/playback.ts",
+      "frontend/src/stores/playbackStore.js",
+      "convex/schema.ts"
+    ],
+    "concepts": ["revision", "lastWriterSeq", "leaderLeaseId", "leaderEpoch"]
+  },
+  {
+    "id": "room-payload-assembly",
+    "question": "How is the complete room payload assembled from normalized Convex documents? Trace how queue entries, the playback cursor, and the current song become the shape consumed by clients. Cite the implementation and relevant schema.",
+    "requiredPaths": [
+      "convex/rooms.ts",
+      "convex/schema.ts"
+    ],
+    "concepts": ["playbackState", "currentQueueItemId", "currentSong", "cursor"]
+  },
+  {
+    "id": "admin-cookie-session",
+    "question": "Trace the admin authentication lifecycle from login through protected API access and logout. Explain how the cookie is created, validated, and cleared, including its security settings and failure behavior. Cite source files rather than tests alone.",
+    "requiredPaths": [
+      "backend/api/auth.py",
+      "backend/api/dependencies.py"
+    ],
+    "concepts": ["admin_token", "httponly", "require_admin", "delete_cookie"]
+  },
+  {
+    "id": "queue-order-and-duplicates",
+    "question": "Explain the queue's ordering and duplicate policy. What position does a new item receive, how are removals or reordering kept consistent, and under what conditions can adding a song fail? Cite the source-of-truth implementation.",
+    "requiredPaths": [
+      "convex/queue.ts",
+      "convex/schema.ts"
+    ],
+    "concepts": ["position", "duplicate", "queued", "roomId"]
+  },
+  {
+    "id": "lyrics-fallback-pipeline",
+    "question": "Trace how the YouTube processing pipeline chooses and transforms lyric data when word-level transcription, lyric enrichment, or post-processing is unavailable or fails. Explain the fallback behavior and what is ultimately persisted, with source citations.",
+    "requiredPaths": [
+      "backend/services/youtube_processing/pipeline.py",
+      "backend/services/youtube_processing/failures.py",
+      "backend/services/song_service.py"
+    ],
+    "concepts": ["word_level_transcription", "lyrics", "fallback", "update_song"]
+  }
+]

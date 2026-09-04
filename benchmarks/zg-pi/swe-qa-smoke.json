@@ -1,0 +1,42 @@
+[
+  {
+    "id": "reflex:6",
+    "promptVerbatim": true,
+    "repository": "reflex-dev/reflex",
+    "repositoryCommit": "fe0f946dc0c240c6c1e513318c21db407e191c78",
+    "question": "What is the role of the computation function returned by the derived state variable class's computation function accessor in the framework's dependency tracking for state recomputation?",
+    "requiredPaths": [], "concepts": []
+  },
+  {
+    "id": "pylint:9",
+    "promptVerbatim": true,
+    "repository": "pylint-dev/pylint",
+    "repositoryCommit": "44740e5e5cdd2b80321a4f0ed4254213d058b9f6",
+    "question": "What is the scope resolution chain for the namedtuple class attribute used as return type annotation in the nested class that affects static type checking in importing modules?",
+    "requiredPaths": [], "concepts": []
+  },
+  {
+    "id": "matplotlib:37",
+    "promptVerbatim": true,
+    "repository": "matplotlib/matplotlib",
+    "repositoryCommit": "a5e1f6086e92d5cc0a23f85685d03d85b89a8395",
+    "question": "Where does the FontInfo NamedTuple propagate font metrics and glyph data through the mathematical text rendering pipeline, and what control flow determines whether the postscript_name or the FT2Font object is used at different stages of character rendering?",
+    "requiredPaths": [], "concepts": []
+  },
+  {
+    "id": "streamlink:14",
+    "promptVerbatim": true,
+    "repository": "streamlink/streamlink",
+    "repositoryCommit": "ab1f36560005253ca6a290a614730bf18a29a7f9",
+    "question": "How does the stream retrieval method implement multi-stage validation schema composition for extracting and processing embedded media delivery platform metadata?",
+    "requiredPaths": [], "concepts": []
+  },
+  {
+    "id": "xarray:32",
+    "promptVerbatim": true,
+    "repository": "pydata/xarray",
+    "repositoryCommit": "40119bf35c53fc222934894d842cfc07b2e264bf",
+    "question": "Why do performance bottlenecks emerge from the sequential invocation of from_variables(), from_xindex(), and assign_coords() operations on large datasets, and how does the overhead of variable materialization during coordinate transformation impact throughput compared to direct index assignment?",
+    "requiredPaths": [], "concepts": []
+  }
+]

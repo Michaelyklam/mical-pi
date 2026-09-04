@@ -10,3 +10,6 @@ trust.json
 .DS_Store
 *.log
 temp/
+benchmarks/zg-pi/runs/
+benchmarks/zg-pi/cache/
+benchmarks/zg-pi/index-meta.json
