@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeAnthropicProfile, normalizeAnthropicUsage } from "./adapters/anthropic.ts";
+import { nextMonthStart, normalizeAnthropicProfile, normalizeAnthropicUsage } from "./adapters/anthropic.ts";
 import { normalizeCodexAccount, normalizeCodexUsage } from "./adapters/codex.ts";
 
 const now = Date.parse("2026-07-30T12:00:00Z");
@@ -27,6 +27,12 @@ test("Anthropic uses monthly spend as Usage when rolling windows are absent", ()
 		spend: { enabled: true, percent: 100, used: { amount_minor: 150006, currency: "USD", exponent: 2 } },
 	}, now);
 	assert.deepEqual(result.windows.map((window) => [window.label, window.usedPercent, window.kind]), [["month", 100, "spend"]]);
+	assert.equal(result.windows[0]!.resetsAt, Date.parse("2026-08-01T00:00:00Z"));
+});
+
+test("Anthropic monthly spend resets at the next UTC calendar month, including year rollover", () => {
+	assert.equal(nextMonthStart(Date.parse("2026-12-15T08:00:00Z")), Date.parse("2027-01-01T00:00:00Z"));
+	assert.equal(nextMonthStart(Date.parse("2026-07-31T23:59:59Z")), Date.parse("2026-08-01T00:00:00Z"));
 });
 
 test("Codex chooses the main account windows and account-wide daily tokens", () => {

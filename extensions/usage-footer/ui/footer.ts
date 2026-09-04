@@ -22,14 +22,27 @@ const compact = (count: number, divisor: number, suffix: string): string => `${(
 const tokens = (count: number): string => count >= 1_000_000 ? compact(count, 1_000_000, "M") : count >= 1_000 ? compact(count, 1_000, "k") : String(count);
 const money = (amount: number): string => `$${amount.toFixed(2)}`;
 
-function progress(window: AllowanceWindow, theme: ThemeLike): string {
+/** Time until the window resets, e.g. "3d 4h", "2h 15m", "40m". Falls back to the window label when no reset time is known. */
+export function resetLabel(window: AllowanceWindow, now: number): string {
+	if (window.resetsAt === undefined || !Number.isFinite(window.resetsAt)) return window.label;
+	const remainingMinutes = Math.ceil((window.resetsAt - now) / 60_000);
+	if (remainingMinutes <= 0) return "resetting";
+	const days = Math.floor(remainingMinutes / 1440);
+	const hours = Math.floor((remainingMinutes % 1440) / 60);
+	const minutes = remainingMinutes % 60;
+	if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+	if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+	return `${minutes}m`;
+}
+
+function progress(window: AllowanceWindow, theme: ThemeLike, now: number): string {
 	const filled = Math.max(0, Math.min(5, Math.round(window.usedPercent / 20)));
 	const bar = `${"█".repeat(filled)}${"░".repeat(5 - filled)}`;
 	const role = window.usedPercent >= 90 ? "error" : window.usedPercent >= 70 ? "warning" : "success";
-	return theme.fg(role, `${window.label} ${bar} ${Math.round(window.usedPercent)}%`);
+	return theme.fg(role, `${resetLabel(window, now)} ${bar} ${Math.round(window.usedPercent)}%`);
 }
 
-function usageText(usage: AccountUsageView, theme: ThemeLike, oneWindow = false): string {
+function usageText(usage: AccountUsageView, theme: ThemeLike, now: number, oneWindow = false): string {
 	if (usage.status === "local" && usage.local) {
 		const estimate = usage.local.hasUnpricedUsage && usage.local.estimated === 0 ? "est n/a" : `${money(usage.local.estimated)} est`;
 		return `Usage (local today): ${tokens(usage.local.tokens)} tok · ~${estimate}`;
@@ -38,7 +51,7 @@ function usageText(usage: AccountUsageView, theme: ThemeLike, oneWindow = false)
 	if (usage.status === "unavailable") return theme.fg("dim", "Usage: unavailable");
 	let windows = usage.windows;
 	if (oneWindow && windows.length > 1) windows = [[...windows].sort((a, b) => b.usedPercent - a.usedPercent)[0]!];
-	const content = windows.map((window) => progress(window, theme)).join(theme.fg("dim", " · "));
+	const content = windows.map((window) => progress(window, theme, now)).join(theme.fg("dim", " · "));
 	const stale = usage.status === "stale" ? theme.fg("dim", " (stale)") : "";
 	return content ? `Usage: ${content}${stale}` : theme.fg("dim", "Usage: unavailable");
 }
@@ -55,7 +68,7 @@ function joined(parts: string[], theme: ThemeLike): string {
 	return parts.filter(Boolean).join(theme.fg("dim", " | "));
 }
 
-export function renderFooterLines(view: FooterViewModel, width: number, theme: ThemeLike): string[] {
+export function renderFooterLines(view: FooterViewModel, width: number, theme: ThemeLike, now: number = Date.now()): string[] {
 	const accountIdentity = theme.fg("accent", view.accountLabel);
 	const statuses = view.statuses?.join(theme.fg("dim", " · ")) ?? "";
 	const agentStatuses = view.agentStatuses?.join(theme.fg("dim", " · ")) ?? "";
@@ -63,8 +76,8 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const subagentCost = view.subagentCostUsd === undefined
 		? ""
 		: theme.fg("dim", `[Subagents: ${money(view.subagentCostUsd)}]`);
-	const usage = usageText(view.usage, theme);
-	const compactUsage = usageText(view.usage, theme, true);
+	const usage = usageText(view.usage, theme, now);
+	const compactUsage = usageText(view.usage, theme, now, true);
 
 	let line1 = joined([accountIdentity, statuses, cost, usage], theme);
 	const reductions = [

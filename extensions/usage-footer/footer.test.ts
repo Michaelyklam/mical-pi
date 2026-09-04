@@ -59,6 +59,31 @@ test("narrow footer preserves account, compact usage, and context", () => {
 	for (const line of lines) assert.ok(visibleWidth(line) <= 32);
 });
 
+test("usage windows show time until reset instead of the window length", () => {
+	const now = Date.parse("2026-09-02T12:00:00Z");
+	const minute = 60_000;
+	const lines = renderFooterLines({
+		...base,
+		usage: {
+			status: "live",
+			windows: [
+				{ id: "short", label: "5h", usedPercent: 43, kind: "primary", resetsAt: now + 135 * minute },
+				{ id: "long", label: "7d", usedPercent: 91, kind: "secondary", resetsAt: now + (3 * 1440 + 4 * 60) * minute },
+				{ id: "soon", label: "5h", usedPercent: 10, kind: "model", resetsAt: now + 40 * minute },
+				{ id: "spend", label: "month", usedPercent: 20, kind: "spend" },
+			],
+		},
+	}, 200, theme, now);
+	assert.match(lines[0]!, /2h 15m ██░░░ 43%.*3d 4h █████ 91%.*40m █░░░░ 10%.*month █░░░░ 20%/);
+	assert.doesNotMatch(lines[0]!, /5h |7d /);
+
+	const expired = renderFooterLines({
+		...base,
+		usage: { status: "live", windows: [{ id: "short", label: "5h", usedPercent: 99, kind: "primary", resetsAt: now - minute }] },
+	}, 200, theme, now);
+	assert.match(expired[0]!, /resetting █████ 99%/);
+});
+
 test("footer distinguishes stale and local fallback states and missing prices", () => {
 	const stale = renderFooterLines({ ...base, usage: { ...base.usage, status: "stale" } }, 120, theme);
 	assert.match(stale[0]!, /\(stale\)/);

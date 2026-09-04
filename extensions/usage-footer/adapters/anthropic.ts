@@ -37,6 +37,12 @@ function bucket(id: string, label: string, value: UsageBucket | null | undefined
 	} as const;
 }
 
+/** Start of the next UTC calendar month. Anthropic spend limits reset on calendar-month boundaries. */
+export function nextMonthStart(now: number): number {
+	const date = new Date(now);
+	return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+}
+
 export function normalizeAnthropicUsage(input: AnthropicUsage, fetchedAt = Date.now()): ProviderUsageSnapshot {
 	const windows: AllowanceWindow[] = [
 		bucket("five-hour", "5h", input.five_hour, "primary"),
@@ -44,7 +50,7 @@ export function normalizeAnthropicUsage(input: AnthropicUsage, fetchedAt = Date.
 	].filter((value): value is NonNullable<typeof value> => Boolean(value));
 	const spend = input.spend;
 	if (windows.length === 0 && spend?.enabled && typeof spend.percent === "number") {
-		windows.push({ id: "monthly-spend", label: "month", usedPercent: spend.percent, kind: "spend" });
+		windows.push({ id: "monthly-spend", label: "month", usedPercent: spend.percent, kind: "spend", resetsAt: nextMonthStart(fetchedAt) });
 	}
 	const used = spend?.used;
 	const accountSpend =
