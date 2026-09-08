@@ -3,5 +3,10 @@
     "name": "mastering-aws-cli",
     "repo": "https://github.com/SpillwaveSolutions/mastering-aws-cli.git",
     "branch": "main"
+  },
+  {
+    "name": "autoresearch-skill",
+    "repo": "https://github.com/wjgoarxiv/autoresearch-skill.git",
+    "branch": "main"
   }
 ]
