@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import {
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import effortExtension, {
+	matchEffortLevels,
 	effortDisplayName,
 	getAvailableEffortLevels,
 	getEffortBorderRgb,
@@ -25,6 +27,101 @@ function model(overrides: Partial<Model<Api>> = {}): Model<Api> {
 		...overrides,
 	};
 }
+
+test("matches every effort level exactly and tolerates common typos", () => {
+	for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+		assert.deepEqual(matchEffortLevels(` ${level.toUpperCase()} `), [level]);
+	}
+	for (const [input, expected] of Object.entries({
+		off: "off", of: "off", minmal: "minimal", lwo: "low", meduim: "medium",
+		hihg: "high", hgh: "high", higgh: "high", higg: "high", xhihg: "xhigh", mxa: "max",
+		hi: "high", med: "medium",
+	})) {
+		assert.deepEqual(matchEffortLevels(input), [expected], input);
+	}
+	assert.deepEqual(matchEffortLevels("m"), ["minimal", "medium", "max"]);
+	for (const input of ["", "   ", "banana", "high low", "z", "a".repeat(1000)]) {
+		assert.deepEqual(matchEffortLevels(input), [], input);
+	}
+});
+
+function commandHarness(selectedModel: Model<Api> | undefined = model()) {
+	let command!: Parameters<ExtensionAPI["registerCommand"]>[1];
+	const changes: string[] = [];
+	const notices: string[] = [];
+	let pickerCalls = 0;
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionCommandContext) => void>();
+	const pi = {
+		events: { on() {} },
+		on: (event: string, handler: (event: unknown, ctx: ExtensionCommandContext) => void) => handlers.set(event, handler),
+		registerCommand: (name: string, registered: typeof command) => {
+			assert.equal(name, "effort");
+			command = registered;
+		},
+		setThinkingLevel: (level: string) => changes.push(level),
+	} as unknown as ExtensionAPI;
+	const ctx = {
+		model: selectedModel,
+		mode: "rpc",
+		ui: {
+			notify: (text: string) => notices.push(text),
+			custom: async () => { pickerCalls++; return null; },
+		},
+	} as unknown as ExtensionCommandContext;
+	effortExtension(pi);
+	handlers.get("session_start")!({}, ctx);
+	return { command, ctx, changes, notices, handlers, pickerCalls: () => pickerCalls };
+}
+
+test("inline effort commands set the level without opening a picker", async () => {
+	const h = commandHarness(model({ thinkingLevelMap: { xhigh: "xhigh", max: "max" } }));
+	h.ctx.mode = "tui";
+	for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max", "hihg", "MED"]) {
+		await h.command.handler(level, h.ctx);
+	}
+	assert.deepEqual(h.changes, ["off", "minimal", "low", "medium", "high", "xhigh", "max", "high", "medium"]);
+	assert.equal(h.pickerCalls(), 0);
+	assert.equal(h.notices.at(-2), "Effort set to high");
+});
+
+test("invalid, ambiguous, and unsupported effort leave the setting unchanged", async () => {
+	const h = commandHarness();
+	for (const input of ["banana", "m", "xhigh", "xhihg", "max"]) {
+		await h.command.handler(input, h.ctx);
+	}
+	assert.deepEqual(h.changes, []);
+	assert.match(h.notices[0], /Unknown effort/);
+	assert.match(h.notices[1], /ambiguous/);
+	assert.match(h.notices[2], /unavailable/);
+	const missing = commandHarness();
+	missing.ctx.model = undefined;
+	await missing.command.handler("high", missing.ctx);
+	assert.deepEqual(missing.changes, []);
+	assert.match(missing.notices[0], /Select a model/);
+});
+
+test("bare effort keeps the TUI picker and non-TUI level listing", async () => {
+	const h = commandHarness();
+	await h.command.handler("  ", h.ctx);
+	assert.match(h.notices[0], /Available effort levels/);
+	h.ctx.mode = "tui";
+	await h.command.handler("", h.ctx);
+	assert.equal(h.pickerCalls(), 1);
+	assert.deepEqual(h.changes, []);
+});
+
+test("completions match prefixes and typos and follow model capabilities", async () => {
+	const h = commandHarness();
+	const complete = async (input: string) => (await h.command.getArgumentCompletions!(input))?.map((item) => item.value) ?? [];
+	assert.deepEqual(await complete(""), ["off", "minimal", "low", "medium", "high"]);
+	assert.deepEqual(await complete("m"), ["minimal", "medium"]);
+	assert.deepEqual(await complete("hihg"), ["high"]);
+	assert.deepEqual(await complete("banana"), []);
+	assert.deepEqual(await complete("xhigh"), []);
+	h.ctx.model = model({ reasoning: false });
+	h.handlers.get("model_select")!({}, h.ctx);
+	assert.deepEqual(await complete(""), ["off"]);
+});
 
 test("returns only off for a model without reasoning", () => {
 	assert.deepEqual(getAvailableEffortLevels(model({ reasoning: false })), ["off"]);

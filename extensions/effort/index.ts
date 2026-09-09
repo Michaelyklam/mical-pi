@@ -22,6 +22,33 @@ const EFFORT_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	max: "Maximum reasoning",
 };
 
+const EFFORT_LEVELS = Object.keys(EFFORT_DESCRIPTIONS) as ThinkingLevel[];
+
+/** Accept one insertion, deletion, substitution, or adjacent transposition. */
+function isEffortTypo(input: string, level: string): boolean {
+	if (Math.abs(input.length - level.length) > 1) return false;
+	let index = 0;
+	while (index < Math.min(input.length, level.length) && input[index] === level[index]) index++;
+	if (input.length !== level.length) {
+		const [longer, shorter] = input.length > level.length ? [input, level] : [level, input];
+		return longer.slice(index + 1) === shorter.slice(index);
+	}
+	return input.slice(index + 1) === level.slice(index + 1)
+		|| (input[index] === level[index + 1] && input[index + 1] === level[index]
+			&& input.slice(index + 2) === level.slice(index + 2));
+}
+
+export function matchEffortLevels(input: string): ThinkingLevel[] {
+	const query = input.trim().toLowerCase();
+	if (!query) return [];
+	const exact = EFFORT_LEVELS.find((level) => level === query);
+	if (exact) return [exact];
+	const prefixes = EFFORT_LEVELS.filter((level) => level.startsWith(query));
+	if (prefixes.length) return prefixes;
+	if (query.length < 2) return [];
+	return EFFORT_LEVELS.filter((level) => isEffortTypo(query, level));
+}
+
 export function getAvailableEffortLevels(model: Model<Api> | undefined): ThinkingLevel[] {
 	if (!model) return [];
 	return getSupportedThinkingLevels(model) as ThinkingLevel[];
@@ -100,6 +127,10 @@ function rgbColorizer(theme: Theme, color: RgbColor): (text: string) => string {
 
 export default function effortExtension(pi: ExtensionAPI) {
 	let fastModeActive = false;
+	let completionLevels: ThinkingLevel[] = [];
+	pi.on("model_select", (_event, ctx) => {
+		completionLevels = getAvailableEffortLevels(ctx.model);
+	});
 	let requestEditorRender: (() => void) | undefined;
 
 	pi.events.on(FAST_MODE_STATUS_EVENT, (data) => {
@@ -110,6 +141,7 @@ export default function effortExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", (_event, ctx) => {
+		completionLevels = getAvailableEffortLevels(ctx.model);
 		if (ctx.mode !== "tui") return;
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
 			requestEditorRender = () => tui.requestRender();
@@ -155,7 +187,12 @@ export default function effortExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("effort", {
-		description: "Select the reasoning effort for the current model",
+		description: "Set reasoning effort: /effort <level>, or open the picker with /effort",
+		getArgumentCompletions: (prefix) => {
+			const matches = prefix.trim() ? matchEffortLevels(prefix) : EFFORT_LEVELS;
+			const items = getEffortSelectItems(matches.filter((level) => completionLevels.includes(level)));
+			return items.length ? items : null;
+		},
 		handler: async (args, ctx) => {
 			const model = ctx.model;
 			if (!model) {
@@ -167,7 +204,18 @@ export default function effortExtension(pi: ExtensionAPI) {
 			const requestedLevel = args.trim().toLowerCase();
 
 			if (requestedLevel) {
-				if (!availableLevels.includes(requestedLevel as ThinkingLevel)) {
+				const matches = matchEffortLevels(requestedLevel);
+				if (matches.length !== 1) {
+					ctx.ui.notify(
+						matches.length
+							? `Effort "${requestedLevel}" is ambiguous: ${matches.join(", ")}. Type a full level.`
+							: `Unknown effort "${requestedLevel}". Available: ${availableLevels.join(", ")}`,
+						"warning",
+					);
+					return;
+				}
+				const level = matches[0];
+				if (!availableLevels.includes(level)) {
 					ctx.ui.notify(
 						`Effort "${requestedLevel}" is unavailable for ${model.provider}/${model.id}. Available: ${availableLevels.join(", ")}`,
 						"warning",
@@ -175,8 +223,8 @@ export default function effortExtension(pi: ExtensionAPI) {
 					return;
 				}
 
-				pi.setThinkingLevel(requestedLevel as ThinkingLevel);
-				ctx.ui.notify(`Effort set to ${requestedLevel}`, "info");
+				pi.setThinkingLevel(level);
+				ctx.ui.notify(`Effort set to ${level}`, "info");
 				return;
 			}
 
