@@ -85,6 +85,7 @@ import {
   runTool,
   type SubagentRuntime,
 } from "./src/runtime.ts";
+import { HOST_AGENT_COUNT_EVENT } from "../host-telemetry/index.ts";
 import { openSubagentPicker, openSubagentTakeover } from "./src/ui/takeover.ts";
 
 const SUBAGENT_OUTPUT_MAX_BYTES = 24 * 1024;
@@ -174,6 +175,8 @@ export default function (pi: ExtensionAPI) {
 
   const updateStatus = (manager: SubagentManagerShape) => {
     const subs = manager.view.list();
+    const running = subs.filter((snap) => snap.status === "running").length;
+    pi.events.emit(HOST_AGENT_COUNT_EVENT, { source: "subagents", count: running });
     const knownCosts = subs
       .map((snap) => snap.usage.costUsd)
       .filter((cost): cost is number => cost !== undefined);
@@ -186,7 +189,6 @@ export default function (pi: ExtensionAPI) {
       ui.setStatus("subagents", undefined);
       return;
     }
-    const running = subs.filter((snap) => snap.status === "running").length;
     const failed = subs.filter((snap) => snap.status === "error").length;
     const done = subs.length - running - failed;
     ui.setStatus(
@@ -282,6 +284,7 @@ export default function (pi: ExtensionAPI) {
     unsubStatus?.();
     unsubStatus = undefined;
     ui?.setStatus("subagents", undefined);
+    pi.events.emit(HOST_AGENT_COUNT_EVENT, { source: "subagents", count: 0 });
     pi.events.emit("mical:subagent-cost", { costUsd: undefined });
     ui = undefined;
     const closing = runtime;

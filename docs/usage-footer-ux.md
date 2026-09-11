@@ -7,7 +7,7 @@ The footer has two base rows and adds a dedicated child-agent row whenever subag
 ```text
 Model: openai-codex/gpt-5.6-sol · personal | Est: ~$0.33 | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
 subagents: ■ 12 running · /subagents to view | workflows: ■ 2 running · /workflows to view | [Subagents: $0.13]
-Ctx: 72.5k/371k | ⎇ main | (+12,-4)
+Ctx: 72.5k/371k | ⎇ main | (+12,-4) | Agents: 15 | CPU: 63% | RAM: 71% | GPU: 84%
 ```
 
 The agent row is placed directly below model information so a large fan-out cannot displace model, account, cost, or allowance data. It includes both `/subagents` and `/workflows` activity plus the aggregate child cost. When all three are absent, omit the row.
@@ -53,9 +53,15 @@ Usage (local today): 8.4M tok · ~$12.30 est
 
 The local label alone communicates degraded scope; endpoint errors stay in `/usage`.
 
+### Host telemetry
+
+The metadata row samples host CPU and RAM once per second on Linux and macOS. When `nvidia-smi` is available, one long-running process supplies the highest utilization reported by any NVIDIA GPU. The GPU field stays hidden on unsupported hosts.
+
+`Agents` includes every interactive Pi session plus its running direct subagents and individual workflow agents. Each Pi session publishes an atomic heartbeat lease under `$XDG_RUNTIME_DIR/mical-pi/agents`, or `~/.cache/mical-pi/agents` when no runtime directory exists. Readers ignore leases after 3.5 seconds or when their process has exited.
+
 ### Responsive priority
 
-Preserve account/model identity and Usage longest. Subagent/workflow activity truncates independently on its dedicated row and cannot consume model-row capacity. As width shrinks, remove git diff, branch, context, and cost detail before truncating identity or allowance status. If only one allowance window fits, show the most utilized window.
+Preserve account/model identity and Usage longest. Subagent/workflow activity truncates independently on its dedicated row and cannot consume model-row capacity. The metadata row always uses this order: context, branch, diff, agents, CPU, RAM, GPU. As width shrinks it removes fields from right to left, leaving context until last. If only one allowance window fits, show the most utilized window.
 
 ## Account labels
 

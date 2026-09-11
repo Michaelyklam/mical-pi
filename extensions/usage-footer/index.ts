@@ -3,6 +3,8 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { HOST_TELEMETRY_EVENT } from "../host-telemetry/index.ts";
+import type { HostTelemetrySnapshot } from "../host-telemetry/monitor.ts";
 import { FAST_MODE_STATUS_KEY } from "../shared/fast-mode-status.ts";
 import { AccountCatalog } from "./account-catalog.ts";
 import { AccountDiscovery, nativeIdentityMatches, openAIIdentity } from "./account-discovery.ts";
@@ -50,6 +52,7 @@ export default function usageFooter(pi: ExtensionAPI) {
 	let enabled = false;
 	let requestRender: (() => void) | undefined;
 	let subagentCostUsd: number | undefined;
+	let hostTelemetry: HostTelemetrySnapshot | undefined;
 	let git: GitChanges | undefined;
 	let gitTimer: NodeJS.Timeout | undefined;
 	const snapshotStore = new JsonSnapshotStore(SNAPSHOT_FILE);
@@ -57,6 +60,11 @@ export default function usageFooter(pi: ExtensionAPI) {
 	pi.events.on("mical:subagent-cost", (data) => {
 		const cost = (data as { costUsd?: unknown }).costUsd;
 		subagentCostUsd = typeof cost === "number" && Number.isFinite(cost) ? cost : undefined;
+		requestRender?.();
+	});
+
+	pi.events.on(HOST_TELEMETRY_EVENT, (data) => {
+		hostTelemetry = data as HostTelemetrySnapshot;
 		requestRender?.();
 	});
 
@@ -159,6 +167,7 @@ export default function usageFooter(pi: ExtensionAPI) {
 						contextWindowTokens: model.contextWindow,
 						branch: footerData.getGitBranch(),
 						git,
+						host: hostTelemetry,
 						cost,
 						usage: monitor.get(account.accountKey),
 					}, width, theme);

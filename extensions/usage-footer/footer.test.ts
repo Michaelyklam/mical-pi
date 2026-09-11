@@ -59,6 +59,30 @@ test("narrow footer preserves account, compact usage, and context", () => {
 	for (const line of lines) assert.ok(visibleWidth(line) <= 32);
 });
 
+test("host telemetry follows the requested order and hides fields from right to left", () => {
+	const host = { agents: 9, cpuPercent: 63, ramPercent: 71, gpuPercent: 84 };
+	const wide = renderFooterLines({ ...base, host }, 100, theme)[1]!;
+	const ordered = ["Ctx:", "⎇ main", "(+12,-4)", "Agents: 9", "CPU: 63%", "RAM: 71%", "GPU: 84%"];
+	for (let index = 1; index < ordered.length; index++) {
+		assert.ok(wide.indexOf(ordered[index - 1]!) < wide.indexOf(ordered[index]!));
+	}
+
+	const cases = [
+		{ width: 79, kept: "RAM: 71%", hidden: "GPU:" },
+		{ width: 68, kept: "CPU: 63%", hidden: "RAM:" },
+		{ width: 57, kept: "Agents: 9", hidden: "CPU:" },
+		{ width: 46, kept: "(+12,-4)", hidden: "Agents:" },
+		{ width: 34, kept: "⎇ main", hidden: "(+12,-4)" },
+		{ width: 23, kept: "Ctx:", hidden: "⎇ main" },
+	];
+	for (const entry of cases) {
+		const line = renderFooterLines({ ...base, host }, entry.width, theme)[1]!;
+		assert.match(line, new RegExp(entry.kept.replace(/[()+-]/g, "\\$&")));
+		assert.doesNotMatch(line, new RegExp(entry.hidden.replace(/[()+-]/g, "\\$&")));
+		assert.ok(visibleWidth(line) <= entry.width);
+	}
+});
+
 test("usage windows show time until reset instead of the window length", () => {
 	const now = Date.parse("2026-09-02T12:00:00Z");
 	const minute = 60_000;

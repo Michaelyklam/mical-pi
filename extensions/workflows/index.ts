@@ -33,6 +33,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
+import { HOST_AGENT_COUNT_EVENT } from "../host-telemetry/index.ts";
 import { formatActivityStatus } from "../shared/activity-status.ts";
 import { createWorkflowPersistence, persistWorkflowJson } from "./artifacts.ts";
 import { RunController } from "./controller.ts";
@@ -259,6 +260,19 @@ export default function workflows(pi: ExtensionAPI) {
   let lastUi: ExtensionContext["ui"] | undefined;
   let completedRuns = 0;
   let failedRuns = 0;
+  let activeAgentCalls = 0;
+  const publishActiveAgentCount = () =>
+    pi.events.emit(HOST_AGENT_COUNT_EVENT, { source: "workflows", count: activeAgentCalls });
+  const withActiveAgent = async <T>(run: () => Promise<T>): Promise<T> => {
+    activeAgentCalls += 1;
+    publishActiveAgentCount();
+    try {
+      return await run();
+    } finally {
+      activeAgentCalls = Math.max(0, activeAgentCalls - 1);
+      publishActiveAgentCount();
+    }
+  };
   const updateIndicator = () => {
     const ui = lastUi;
     if (!ui) return;
@@ -288,6 +302,7 @@ export default function workflows(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     if (ctx.hasUI) lastUi = ctx.ui;
+    publishActiveAgentCount();
     updateIndicator();
   });
 
@@ -312,6 +327,8 @@ export default function workflows(pi: ExtensionAPI) {
       if (timer) clearTimeout(timer);
     }
     lastUi?.setStatus("workflows", undefined);
+    activeAgentCalls = 0;
+    publishActiveAgentCount();
     lastUi = undefined;
   });
 
@@ -514,7 +531,7 @@ export default function workflows(pi: ExtensionAPI) {
           return fail("Workflow was aborted before this agent started");
 
         return controller
-          .schedule(async (runSignal) => {
+          .schedule((runSignal) => withActiveAgent(async () => {
             // Model/provider resolution: default to the parent session's model.
             let model: WorkflowModel | undefined = ctx.model;
             if (opts.model !== undefined || opts.provider !== undefined) {
@@ -615,7 +632,7 @@ export default function workflows(pi: ExtensionAPI) {
                 : {}),
               ...(outcome.error !== undefined ? { error: outcome.error } : {}),
             };
-          }, invocationSignal)
+          }), invocationSignal)
           .catch((error) => fail(errorText(error)));
       };
 

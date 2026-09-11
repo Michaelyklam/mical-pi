@@ -1,4 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { HostTelemetrySnapshot } from "../../host-telemetry/monitor.ts";
 import type { AccountUsageView, AllowanceWindow, SessionCostSummary } from "../domain.ts";
 
 export interface FooterViewModel {
@@ -12,6 +13,7 @@ export interface FooterViewModel {
 	contextWindowTokens?: number;
 	branch?: string | null;
 	git?: { insertions: number; deletions: number };
+	host?: HostTelemetrySnapshot;
 	cost: Pick<SessionCostSummary, "reported" | "estimated" | "hasEstimatedUsage" | "hasUnpricedUsage">;
 	usage: AccountUsageView;
 }
@@ -100,12 +102,16 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const context = theme.fg("dim", `Ctx: ${contextUsed}/${contextTotal}`);
 	const branch = view.branch ? theme.fg("syntaxKeyword", `⎇ ${view.branch}`) : "";
 	const diff = view.git && (view.git.insertions || view.git.deletions) ? theme.fg("warning", `(+${view.git.insertions},-${view.git.deletions})`) : "";
-	let line2 = joined([context, branch, diff], theme);
-	for (const reduced of [[context, branch], [context]]) {
-		if (visibleWidth(line2) <= width) break;
-		line2 = joined(reduced, theme);
-	}
-	line2 = truncateToWidth(line2, width, "…");
+	const percent = (label: string, value: number | undefined) => value === undefined ? "" : theme.fg("dim", `${label}: ${Math.round(value)}%`);
+	const hostFields = view.host ? [
+		theme.fg("dim", `Agents: ${view.host.agents}`),
+		percent("CPU", view.host.cpuPercent),
+		percent("RAM", view.host.ramPercent),
+		percent("GPU", view.host.gpuPercent),
+	] : [];
+	const metadata = [context, branch, diff, ...hostFields].filter(Boolean);
+	while (metadata.length > 1 && visibleWidth(joined(metadata, theme)) > width) metadata.pop();
+	const line2 = truncateToWidth(joined(metadata, theme), width, "…");
 
 	const agentLine = truncateToWidth(joined([agentStatuses, subagentCost], theme), width, "…");
 	return agentLine ? [line1, agentLine, line2] : [line1, line2];
