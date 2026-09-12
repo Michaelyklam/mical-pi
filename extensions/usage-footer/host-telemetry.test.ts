@@ -30,18 +30,19 @@ test("macOS RAM utilization treats free, inactive, and speculative pages as recl
 	assert.equal(macRamPercent(vmStat, 1000 * 4096), 75);
 });
 
-test("agent registry sums Pi sessions and their children and removes stale leases", async () => {
+test("agent registry sums active and idle Pi sessions and their children and removes stale leases", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "mical-pi-agents-"));
 	try {
 		const alive = () => true;
 		const first = new AgentRegistry("one", directory, 1001, alive);
 		const second = new AgentRegistry("two", directory, 1002, alive);
-		await first.heartbeat(3, 10_000);
-		await second.heartbeat(2, 10_000);
-		assert.equal(await first.count(10_000), 7);
+		await first.heartbeat(3, 10_000, true, 1);
+		await second.heartbeat(2, 10_000, false);
+		assert.deepEqual(await first.activity(10_000), { active: 6, idle: 2, total: 8 });
+		assert.equal(await first.count(10_000), 8);
 
-		await second.heartbeat(2, 6_000);
-		assert.equal(await first.count(10_000), 4);
+		await second.heartbeat(2, 6_000, false);
+		assert.deepEqual(await first.activity(10_000), { active: 4, idle: 1, total: 5 });
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}

@@ -8,6 +8,15 @@ export interface AgentLease {
 	sessionId: string;
 	heartbeatAt: number;
 	childAgents: number;
+	active?: boolean;
+	activeChildAgents?: number;
+	idleChildAgents?: number;
+}
+
+export interface AgentActivityCounts {
+	active: number;
+	idle: number;
+	total: number;
 }
 
 const LEASE_TTL_MS = 3_500;
@@ -33,7 +42,10 @@ function validLease(value: unknown): value is AgentLease {
 	return Number.isInteger(lease.pid) && Number(lease.pid) > 0 &&
 		typeof lease.sessionId === "string" &&
 		typeof lease.heartbeatAt === "number" && Number.isFinite(lease.heartbeatAt) &&
-		typeof lease.childAgents === "number" && Number.isInteger(lease.childAgents) && lease.childAgents >= 0;
+		typeof lease.childAgents === "number" && Number.isInteger(lease.childAgents) && lease.childAgents >= 0 &&
+		(lease.active === undefined || typeof lease.active === "boolean") &&
+		(lease.activeChildAgents === undefined || (Number.isInteger(lease.activeChildAgents) && lease.activeChildAgents >= 0)) &&
+		(lease.idleChildAgents === undefined || (Number.isInteger(lease.idleChildAgents) && lease.idleChildAgents >= 0));
 }
 
 /** Atomic, crash-tolerant registry of interactive Pi sessions on this host. */
@@ -50,9 +62,19 @@ export class AgentRegistry {
 		this.leasePath = join(directory, `${pid}-${key}.json`);
 	}
 
-	async heartbeat(childAgents: number, now = Date.now()): Promise<void> {
+	async heartbeat(childAgents: number, now = Date.now(), active = false, idleChildAgents = 0): Promise<void> {
 		await mkdir(this.directory, { recursive: true, mode: 0o700 });
-		const lease: AgentLease = { pid: this.pid, sessionId: this.sessionId, heartbeatAt: now, childAgents };
+		const activeChildAgents = Math.max(0, Math.floor(childAgents));
+		const normalizedIdleChildAgents = Math.max(0, Math.floor(idleChildAgents));
+		const lease: AgentLease = {
+			pid: this.pid,
+			sessionId: this.sessionId,
+			heartbeatAt: now,
+			childAgents: activeChildAgents + normalizedIdleChildAgents,
+			active,
+			activeChildAgents,
+			idleChildAgents: normalizedIdleChildAgents,
+		};
 		const temporary = `${this.leasePath}.${randomBytes(4).toString("hex")}.tmp`;
 		try {
 			await writeFile(temporary, `${JSON.stringify(lease)}\n`, { mode: 0o600 });
@@ -62,14 +84,15 @@ export class AgentRegistry {
 		}
 	}
 
-	async count(now = Date.now()): Promise<number> {
+	async activity(now = Date.now()): Promise<AgentActivityCounts> {
 		let names: string[];
 		try {
 			names = await readdir(this.directory);
 		} catch {
-			return 0;
+			return { active: 0, idle: 0, total: 0 };
 		}
-		let agents = 0;
+		let active = 0;
+		let idle = 0;
 		await Promise.all(names.filter((name) => name.endsWith(".json")).map(async (name) => {
 			const path = join(this.directory, name);
 			try {
@@ -78,12 +101,19 @@ export class AgentRegistry {
 					await unlink(path).catch(() => undefined);
 					return;
 				}
-				agents += 1 + lease.childAgents;
+				const activeChildren = lease.activeChildAgents ?? lease.childAgents;
+				const idleChildren = lease.idleChildAgents ?? 0;
+				active += (lease.active ? 1 : 0) + activeChildren;
+				idle += (lease.active ? 0 : 1) + idleChildren;
 			} catch {
 				await unlink(path).catch(() => undefined);
 			}
 		}));
-		return agents;
+		return { active, idle, total: active + idle };
+	}
+
+	async count(now = Date.now()): Promise<number> {
+		return (await this.activity(now)).total;
 	}
 
 	async remove(): Promise<void> {

@@ -18,7 +18,7 @@ export interface FooterViewModel {
 	usage: AccountUsageView;
 }
 
-interface ThemeLike { fg(role: string, text: string): string }
+interface ThemeLike { fg(role: string, text: string): string; bold?: (text: string) => string }
 
 const compact = (count: number, divisor: number, suffix: string): string => `${(count / divisor).toFixed(1).replace(/\.0$/, "")}${suffix}`;
 const tokens = (count: number): string => count >= 1_000_000 ? compact(count, 1_000_000, "M") : count >= 1_000 ? compact(count, 1_000, "k") : String(count);
@@ -103,8 +103,12 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const branch = view.branch ? theme.fg("syntaxKeyword", `⎇ ${view.branch}`) : "";
 	const diff = view.git && (view.git.insertions || view.git.deletions) ? theme.fg("warning", `(+${view.git.insertions},-${view.git.deletions})`) : "";
 	const percent = (label: string, value: number | undefined) => value === undefined ? "" : theme.fg("dim", `${label}: ${Math.round(value)}%`);
+	const activeAgents = (count: number) => `\x1b[1;92m${count}\x1b[22;39m`;
+	const agents = view.host?.agentActivity
+		? `Agents: ${activeAgents(view.host.agentActivity.active)}/${theme.fg("dim", String(view.host.agentActivity.idle))}`
+		: view.host ? theme.fg("dim", `Agents: ${view.host.agents}`) : "";
 	const hostFields = view.host ? [
-		theme.fg("dim", `Agents: ${view.host.agents}`),
+		agents,
 		percent("CPU", view.host.cpuPercent),
 		percent("RAM", view.host.ramPercent),
 		percent("GPU", view.host.gpuPercent),

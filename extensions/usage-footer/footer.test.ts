@@ -60,9 +60,10 @@ test("narrow footer preserves account, compact usage, and context", () => {
 });
 
 test("host telemetry follows the requested order and hides fields from right to left", () => {
-	const host = { agents: 9, cpuPercent: 63, ramPercent: 71, gpuPercent: 84 };
+	const host = { agents: 9, agentActivity: { active: 6, idle: 3, total: 9 }, cpuPercent: 63, ramPercent: 71, gpuPercent: 84 };
 	const wide = renderFooterLines({ ...base, host }, 100, theme)[1]!;
-	const ordered = ["Ctx:", "⎇ main", "(+12,-4)", "Agents: 9", "CPU: 63%", "RAM: 71%", "GPU: 84%"];
+	assert.match(wide, /Agents: \x1b\[1;92m6\x1b\[22;39m\/3/);
+	const ordered = ["Ctx:", "⎇ main", "(+12,-4)", "Agents:", "CPU: 63%", "RAM: 71%", "GPU: 84%"];
 	for (let index = 1; index < ordered.length; index++) {
 		assert.ok(wide.indexOf(ordered[index - 1]!) < wide.indexOf(ordered[index]!));
 	}
@@ -70,7 +71,7 @@ test("host telemetry follows the requested order and hides fields from right to 
 	const cases = [
 		{ width: 79, kept: "RAM: 71%", hidden: "GPU:" },
 		{ width: 68, kept: "CPU: 63%", hidden: "RAM:" },
-		{ width: 57, kept: "Agents: 9", hidden: "CPU:" },
+		{ width: 57, kept: "Agents:", hidden: "CPU:" },
 		{ width: 46, kept: "(+12,-4)", hidden: "Agents:" },
 		{ width: 34, kept: "⎇ main", hidden: "(+12,-4)" },
 		{ width: 23, kept: "Ctx:", hidden: "⎇ main" },

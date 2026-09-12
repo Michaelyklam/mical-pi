@@ -1,8 +1,9 @@
-import { AgentRegistry } from "./registry.ts";
+import { AgentRegistry, type AgentActivityCounts } from "./registry.ts";
 import { SystemMetricCollector, type SystemMetrics } from "./metrics.ts";
 
 export interface HostTelemetrySnapshot extends SystemMetrics {
 	agents: number;
+	agentActivity: AgentActivityCounts;
 }
 
 export interface HostTelemetryMonitorOptions {
@@ -17,7 +18,8 @@ export interface HostTelemetryMonitorOptions {
 export class HostTelemetryMonitor {
 	private readonly registry: AgentRegistry;
 	private readonly collector: SystemMetricCollector;
-	private readonly sourceCounts = new Map<string, number>();
+	private readonly sourceCounts = new Map<string, AgentActivityCounts>();
+	private selfActive = false;
 	private readonly intervalMs: number;
 	private timer: NodeJS.Timeout | undefined;
 	private currentTick: Promise<void> | undefined;
@@ -35,12 +37,31 @@ export class HostTelemetryMonitor {
 		this.timer.unref?.();
 	}
 
-	setChildAgentCount(source: string, count: number): void {
-		this.sourceCounts.set(source, Math.max(0, Math.floor(count)));
+	setSelfActive(active: boolean): void {
+		this.selfActive = active;
 	}
 
-	private childAgents(): number {
-		return [...this.sourceCounts.values()].reduce((sum, count) => sum + count, 0);
+	setChildAgentCount(source: string, count: number): void {
+		const active = Math.max(0, Math.floor(count));
+		this.sourceCounts.set(source, { active, idle: 0, total: active });
+	}
+
+	setChildAgentActivity(source: string, active: number, idle: number): void {
+		const normalizedActive = Math.max(0, Math.floor(active));
+		const normalizedIdle = Math.max(0, Math.floor(idle));
+		this.sourceCounts.set(source, {
+			active: normalizedActive,
+			idle: normalizedIdle,
+			total: normalizedActive + normalizedIdle,
+		});
+	}
+
+	private childAgents(): AgentActivityCounts {
+		return [...this.sourceCounts.values()].reduce<AgentActivityCounts>((sum, count) => ({
+			active: sum.active + count.active,
+			idle: sum.idle + count.idle,
+			total: sum.total + count.total,
+		}), { active: 0, idle: 0, total: 0 });
 	}
 
 	private tick(): Promise<void> {
@@ -54,12 +75,13 @@ export class HostTelemetryMonitor {
 
 	private async sample(): Promise<void> {
 		try {
-			await this.registry.heartbeat(this.childAgents());
-			const [agents, metrics] = await Promise.all([
-				this.registry.count(),
+			const childAgents = this.childAgents();
+			await this.registry.heartbeat(childAgents.active, Date.now(), this.selfActive, childAgents.idle);
+			const [agentActivity, metrics] = await Promise.all([
+				this.registry.activity(),
 				this.collector.sample(),
 			]);
-			this.options.onSnapshot({ agents, ...metrics });
+			this.options.onSnapshot({ agents: agentActivity.total, agentActivity, ...metrics });
 		} catch {
 			// Telemetry must never interfere with an interactive Pi session.
 		}
