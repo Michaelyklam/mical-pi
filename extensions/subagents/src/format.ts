@@ -55,20 +55,8 @@ interface ActivityCounts {
   failed: number;
 }
 
-const SQUARE = "■";
-
 export function formatActivityStatus(theme: Theme, counts: ActivityCounts) {
-  const parts: string[] = [];
-  if (counts.running > 0) {
-    parts.push(theme.fg("warning", `${SQUARE} ${counts.running} running`));
-  }
-  if (counts.done > 0) {
-    parts.push(theme.fg("success", `${SQUARE} ${counts.done} done`));
-  }
-  if (counts.failed > 0) {
-    parts.push(theme.fg("error", `${SQUARE} ${counts.failed} failed`));
-  }
-  parts.push(theme.fg("accent", "/subagents") + theme.fg("dim", " to view"));
-
-  return `${theme.fg("muted", "subagents:")} ${parts.join(theme.fg("dim", " · "))}`;
+  const active = `\x1b[1;92m${counts.running}\x1b[22;39m`;
+  const finished = `\x1b[38;2;128;128;128m${counts.done + counts.failed}\x1b[39m`;
+  return `${theme.fg("muted", "subagents")} ${active}/${finished}`;
 }

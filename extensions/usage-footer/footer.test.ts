@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { stripVTControlCharacters } from "node:util";
+import { formatActivityStatus } from "../subagents/src/format.ts";
 import { renderFooterLines, type FooterViewModel } from "./ui/footer.ts";
 
 const theme = { fg: (_role: string, text: string) => text };
@@ -39,8 +41,18 @@ test("subagent and workflow activity gets a dedicated row below account informat
 	assert.equal(lines.length, 3);
 	assert.match(lines[0]!, /^personal.*plugin warning.*Est: ~\$0\.33/);
 	assert.doesNotMatch(lines[0]!, /subagents|workflows|Subagents:/i);
-	assert.match(lines[1]!, /subagents: 12 running.*workflows: 2 running.*\[Subagents: \$0\.13\]/);
+	assert.match(lines[1]!, /subagents: 12 running.*workflows: 2 running.*\[\$0\.13\]/);
 	assert.match(lines[2]!, /^Ctx: 72\.5k\/371k.*⎇ main.*\(\+12,-4\)/);
+});
+
+test("subagent row uses compact counts, fixed colors, and a compact cost", () => {
+	const status = formatActivityStatus(theme as Parameters<typeof formatActivityStatus>[0], { running: 5, done: 2, failed: 1 });
+	const line = renderFooterLines({ ...base, agentStatuses: [status], subagentCostUsd: 138.34 }, 140, theme)[1]!;
+	assert.equal(stripVTControlCharacters(line), "subagents 5/3 [$138.34]");
+	assert.ok(line.includes("\x1b[1;92m5\x1b[22;39m"));
+	assert.ok(line.includes("\x1b[38;2;128;128;128m3\x1b[39m"));
+	const idle = formatActivityStatus(theme as Parameters<typeof formatActivityStatus>[0], { running: 0, done: 8, failed: 0 });
+	assert.equal(stripVTControlCharacters(idle), "subagents 0/8");
 });
 
 test("constrained footer prioritizes extension statuses and compact usage over cost", () => {

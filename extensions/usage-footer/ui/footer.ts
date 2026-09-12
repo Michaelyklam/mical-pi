@@ -77,7 +77,7 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const cost = costText(view.cost, theme);
 	const subagentCost = view.subagentCostUsd === undefined
 		? ""
-		: theme.fg("dim", `[Subagents: ${money(view.subagentCostUsd)}]`);
+		: theme.fg("dim", `[${money(view.subagentCostUsd)}]`);
 	const usage = usageText(view.usage, theme, now);
 	const compactUsage = usageText(view.usage, theme, now, true);
 
@@ -117,6 +117,6 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	while (metadata.length > 1 && visibleWidth(joined(metadata, theme)) > width) metadata.pop();
 	const line2 = truncateToWidth(joined(metadata, theme), width, "…");
 
-	const agentLine = truncateToWidth(joined([agentStatuses, subagentCost], theme), width, "…");
+	const agentLine = truncateToWidth([agentStatuses, subagentCost].filter(Boolean).join(" "), width, "…");
 	return agentLine ? [line1, agentLine, line2] : [line1, line2];
 }
