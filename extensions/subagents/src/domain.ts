@@ -264,3 +264,7 @@ export class ConcurrencyLimitError extends Data.TaggedError(
 export class SendError extends Data.TaggedError("SendError")<{
   readonly message: string;
 }> {}
+
+export class CompactError extends Data.TaggedError("CompactError")<{
+  readonly message: string;
+}> {}

@@ -37,6 +37,7 @@ import type {
 } from "./domain.ts";
 import {
   BackendUnavailableError,
+  CompactError,
   ConcurrencyLimitError,
   SendError,
   SpawnError,
@@ -45,6 +46,7 @@ import { providerPolicyViolation } from "./provider-policy.ts";
 
 export const MAX_RUNNING = 16;
 export const MAX_TRACKED = 64;
+export const SUBAGENT_COMPACTION_MIN_TOKENS = 40_000;
 const STOP_TIMEOUT_MS = 5_000;
 const ERROR_TEXT_MAX_LENGTH = 4_096;
 const TRANSCRIPT_TEXT_MAX_LENGTH = 64 * 1_024;
@@ -103,6 +105,8 @@ interface Entry {
   /** Idle restart dispatched but RunStarted not folded yet; counts as running
    * so concurrent restarts cannot race past the cap. */
   restarting?: boolean;
+  /** A settled Pi session is currently being compacted. */
+  compacting?: boolean;
 }
 
 // --- Read model ----------------------------------------------------------------
@@ -139,6 +143,15 @@ export interface CancelResult {
   readonly cancelled: boolean;
 }
 
+export interface CompactResult {
+  readonly id: string;
+  readonly title: string;
+  readonly compacted: boolean;
+  readonly tokensBefore?: number;
+  readonly estimatedTokensAfter?: number;
+  readonly reason?: "below-threshold" | "unknown-usage";
+}
+
 export interface SubagentManagerShape {
   spawn(
     backend: BackendName,
@@ -162,6 +175,7 @@ export interface SubagentManagerShape {
     ids: ReadonlyArray<string>,
   ): Effect.Effect<ReadonlyArray<CancelResult>>;
   send(id: string, text: string): Effect.Effect<void, SendError>;
+  compact(id: string): Effect.Effect<CompactResult, CompactError>;
   get(id: string): Effect.Effect<SubagentSnapshot | undefined>;
   readonly list: Effect.Effect<ReadonlyArray<SubagentSnapshot>>;
   readonly disposeAll: Effect.Effect<void>;
@@ -230,7 +244,10 @@ const makeManager = Effect.gen(function* () {
 
   const runningCount = () =>
     [...entries.values()].filter(
-      (e) => e.snapshot.status === "running" || e.restarting === true,
+      (e) =>
+        e.snapshot.status === "running" ||
+        e.restarting === true ||
+        e.compacting === true,
     ).length;
 
   const addInterest = (ids: ReadonlyArray<string>) => {
@@ -630,12 +647,86 @@ const makeManager = Effect.gen(function* () {
       );
     });
 
+  const compact = (id: string) =>
+    Effect.suspend((): Effect.Effect<CompactResult, CompactError> => {
+      const entry = entries.get(id);
+      if (!entry || disposed) {
+        return new CompactError({
+          message: `Subagent "${id}" is no longer tracked.`,
+        });
+      }
+      const backend = registry.get(entry.snapshot.backend);
+      if (!backend?.capabilities.compaction || !entry.session.compact) {
+        return new CompactError({
+          message: `Subagent compaction is not available for the ${entry.snapshot.backend} backend. Only Pi subagents can be compacted.`,
+        });
+      }
+      if (entry.snapshot.status === "running" || entry.restarting) {
+        return new CompactError({
+          message: `Subagent "${id}" is running. Wait for it to settle before compacting.`,
+        });
+      }
+      if (entry.compacting) {
+        return new CompactError({
+          message: `Subagent "${id}" is already being compacted.`,
+        });
+      }
+
+      const tokensBefore = entry.snapshot.usage.tokens;
+      if (tokensBefore === undefined) {
+        return Effect.succeed({
+          id,
+          title: entry.snapshot.title,
+          compacted: false,
+          reason: "unknown-usage",
+        });
+      }
+      if (tokensBefore <= SUBAGENT_COMPACTION_MIN_TOKENS) {
+        return Effect.succeed({
+          id,
+          title: entry.snapshot.title,
+          compacted: false,
+          tokensBefore,
+          reason: "below-threshold",
+        });
+      }
+
+      entry.compacting = true;
+      notify(id);
+      return entry.session.compact.pipe(
+        Effect.map((result): CompactResult => {
+          entry.snapshot.usage = {
+            ...entry.snapshot.usage,
+            tokens: result.estimatedTokensAfter,
+          };
+          return {
+            id,
+            title: entry.snapshot.title,
+            compacted: true,
+            tokensBefore: result.tokensBefore,
+            estimatedTokensAfter: result.estimatedTokensAfter,
+          };
+        }),
+        Effect.ensuring(
+          Effect.sync(() => {
+            entry.compacting = false;
+            notify(id);
+          }),
+        ),
+      );
+    });
+
   const send = (id: string, text: string) =>
     Effect.suspend((): Effect.Effect<void, SendError> => {
       const entry = entries.get(id);
       if (!entry || disposed) {
         return new SendError({
           message: `Subagent "${id}" is no longer tracked.`,
+        });
+      }
+      if (entry.compacting) {
+        return new SendError({
+          message: `Subagent "${id}" is being compacted. Wait for compaction to finish before sending another task.`,
         });
       }
       // Restarting a settled subagent occupies a running slot again, so it
@@ -731,6 +822,7 @@ const makeManager = Effect.gen(function* () {
     waitFor,
     cancel,
     send,
+    compact,
     get: (id) => Effect.sync(() => entries.get(id)?.snapshot),
     list: Effect.sync(() => [...entries.values()].map((e) => e.snapshot)),
     disposeAll,

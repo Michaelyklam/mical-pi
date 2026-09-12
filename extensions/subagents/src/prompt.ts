@@ -15,6 +15,7 @@ export const SUBAGENT_SPAWN_PROMPT_GUIDELINES = [
   "Never select a model from a different provider. Claude Code is permitted only when the parent provider is anthropic; Codex CLI is permitted only when the parent provider is openai-codex.",
   "After subagent_spawn, keep working on parent tasks. A child's result is injected between your tool calls when it settles, so subagent_wait is only for when you cannot take another step without the result.",
   "Use subagent_check to peek at a running child and subagent_send to correct, narrow, or follow up on it. Prefer those over cancelling and respawning.",
+  "After every Pi subagent task settles, call subagent_compact. It compacts only when context exceeds 40,000 tokens. Claude Code and Codex subagents cannot be compacted.",
 ];
 
 /** Model-facing schema descriptions for subagent_spawn task and execution options. */
@@ -65,6 +66,31 @@ export const SUBAGENT_CANCEL_TOOL_DESCRIPTION =
 export const SUBAGENT_CANCEL_PARAMETER_DESCRIPTIONS = {
   ids: 'Subagent ids to cancel, e.g. ["sa-1", "sa-2"]',
 };
+
+/** Describes explicit context compaction for settled Pi subagents. */
+export const SUBAGENT_COMPACT_TOOL_DESCRIPTION =
+  "Compact a settled Pi subagent before reusing it. The operation runs only when the child context exceeds 40,000 tokens; otherwise it returns a skip result. Claude Code and Codex backends do not support compaction and return an error.";
+
+export const SUBAGENT_COMPACT_PARAMETER_DESCRIPTIONS = {
+  id: "Settled Pi subagent id to compact, e.g. \"sa-1\"",
+};
+
+export function buildSubagentCompactResult(options: {
+  id: string;
+  title: string;
+  compacted: boolean;
+  tokensBefore?: number;
+  estimatedTokensAfter?: number;
+  reason?: "below-threshold" | "unknown-usage";
+}) {
+  if (options.compacted) {
+    return `Compacted ${options.id} "${options.title}" from ${options.tokensBefore ?? "?"} to approximately ${options.estimatedTokensAfter ?? "?"} context tokens.`;
+  }
+  if (options.reason === "below-threshold") {
+    return `Skipped compaction for ${options.id} "${options.title}": ${options.tokensBefore ?? 0} context tokens does not exceed the 40,000-token threshold.`;
+  }
+  return `Skipped compaction for ${options.id} "${options.title}": context usage is unknown, so the 40,000-token threshold could not be verified.`;
+}
 
 /** Describes nonblocking inspection of a subagent without consuming its result. */
 export const SUBAGENT_CHECK_TOOL_DESCRIPTION =

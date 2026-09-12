@@ -8,6 +8,7 @@
  * - subagent_wait: block until the listed subagents settle, return results.
  * - subagent_cancel: stop one or more running subagents.
  * - subagent_check: peek at a subagent's status and recent activity.
+ * - subagent_compact: compact a settled Pi child above 40k context tokens.
  * - subagent_send: message a live or settled subagent (steer, correct, ask).
  * - subagent_list: list all subagents.
  *
@@ -62,6 +63,7 @@ import {
 import { SubagentManager, type SubagentManagerShape } from "./src/manager.ts";
 import {
   buildAlreadyDeliveredNotice,
+  buildSubagentCompactResult,
   buildSubagentResultMessage,
   buildSubagentSendResult,
   buildSubagentSpawnResult,
@@ -69,6 +71,8 @@ import {
   SUBAGENT_CANCEL_TOOL_DESCRIPTION,
   SUBAGENT_CHECK_PARAMETER_DESCRIPTIONS,
   SUBAGENT_CHECK_TOOL_DESCRIPTION,
+  SUBAGENT_COMPACT_PARAMETER_DESCRIPTIONS,
+  SUBAGENT_COMPACT_TOOL_DESCRIPTION,
   SUBAGENT_LIST_TOOL_DESCRIPTION,
   SUBAGENT_SEND_PARAMETER_DESCRIPTIONS,
   SUBAGENT_SEND_TOOL_DESCRIPTION,
@@ -543,6 +547,41 @@ export default function (pi: ExtensionAPI) {
             status: entry.status,
           })),
         },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "subagent_compact",
+    label: "Compact Subagent",
+    description: SUBAGENT_COMPACT_TOOL_DESCRIPTION,
+    parameters: Type.Object({
+      id: Type.String({
+        description: SUBAGENT_COMPACT_PARAMETER_DESCRIPTIONS.id,
+      }),
+    }),
+    async execute(_toolCallId, params, signal) {
+      const manager = await getManager();
+      const snap = manager.view.get(params.id);
+      if (!snap || !isModelVisible(snap)) {
+        const known = manager.view
+          .list()
+          .filter(isModelVisible)
+          .map((s) => s.id);
+        throw new Error(
+          `Unknown subagent id "${params.id}". Known: ${known.join(", ") || "none"}.`,
+        );
+      }
+
+      const result = await runTool(getRuntime(), manager.compact(params.id), {
+        signal,
+        interruptMessage: "Subagent compaction aborted.",
+      });
+      return {
+        content: [
+          { type: "text", text: buildSubagentCompactResult(result) },
+        ],
+        details: result,
       };
     },
   });

@@ -48,6 +48,28 @@ const createTestRuntime = () =>
     SubagentManagerLive.pipe(Layer.provide(TestRegistryLive)),
   );
 
+const createCompactionRuntime = (contextTokens: number) => {
+  const backend = makeStubBackend({
+    backend: "pi",
+    defaultModelLabel: "pi/test",
+    contextWindow: 200_000,
+    contextTokens,
+    compaction: true,
+    toolName: "bash",
+    cadenceMs: 1,
+  });
+  return ManagedRuntime.make(
+    SubagentManagerLive.pipe(
+      Layer.provide(
+        Layer.succeed(
+          BackendRegistry,
+          new Map<BackendName, SubagentBackend>([["pi", backend]]),
+        ),
+      ),
+    ),
+  );
+};
+
 function parent(provider: string): ParentContext {
   return {
     parentCwd: process.cwd(),
@@ -289,6 +311,61 @@ test("idle restarts respect the concurrency cap", async () => {
       /Max 16 subagents/,
     );
     assert.equal(manager.view.get(settled.id)?.status, "done");
+  });
+});
+
+test("compact skips settled Pi subagents at or below 40k tokens", async () => {
+  const runtime = createCompactionRuntime(40_000);
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const snap = await runTool(runtime, manager.spawn("pi", task("short task")));
+    await runTool(runtime, manager.waitFor([snap.id]));
+
+    const result = await runTool(runtime, manager.compact(snap.id));
+    assert.deepEqual(result, {
+      id: snap.id,
+      title: "test",
+      compacted: false,
+      tokensBefore: 40_000,
+      reason: "below-threshold",
+    });
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test("compact compacts settled Pi subagents above 40k tokens", async () => {
+  const runtime = createCompactionRuntime(40_001);
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const snap = await runTool(runtime, manager.spawn("pi", task("long task")));
+    await runTool(runtime, manager.waitFor([snap.id]));
+
+    const result = await runTool(runtime, manager.compact(snap.id));
+    assert.deepEqual(result, {
+      id: snap.id,
+      title: "test",
+      compacted: true,
+      tokensBefore: 40_001,
+      estimatedTokensAfter: 10_000,
+    });
+    assert.equal(manager.view.get(snap.id)?.usage.tokens, 10_000);
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test("compact rejects unsupported backends", async () => {
+  await withManager(async (manager, runtime) => {
+    const snap = await runTool(
+      runtime,
+      manager.spawn("claude", task("task", "anthropic")),
+    );
+    await runTool(runtime, manager.waitFor([snap.id]));
+    await assert.rejects(
+      runTool(runtime, manager.compact(snap.id)),
+      /Only Pi subagents can be compacted/,
+    );
   });
 });
 

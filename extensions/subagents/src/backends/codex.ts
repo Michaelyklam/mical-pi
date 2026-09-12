@@ -1106,6 +1106,7 @@ export const codexBackend: SubagentBackend = {
     steering: false,
     modelSelection: true,
     reasoningEffort: true,
+    compaction: false,
   },
   available: Effect.sync(() => resolveCodexBinary() !== undefined),
   spawn: makeCodexSession,

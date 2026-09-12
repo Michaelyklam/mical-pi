@@ -33,7 +33,7 @@ import type {
   SubagentMeta,
   TranscriptPart,
 } from "../domain.ts";
-import { SendError, SpawnError } from "../domain.ts";
+import { CompactError, SendError, SpawnError } from "../domain.ts";
 import { piModelProviderViolation } from "../provider-policy.ts";
 import { createToolCallTimeoutGuard } from "../../../shared/tool-call-timeout.ts";
 
@@ -46,6 +46,7 @@ const CHILD_EXCLUDED_TOOL_NAMES = [
   "subagent_wait",
   "subagent_cancel",
   "subagent_check",
+  "subagent_compact",
   "subagent_list",
   "workflow",
   "ask_user",
@@ -531,6 +532,7 @@ const makePiSession = (
         } catch {
           // Continue with abort/dispose.
         }
+        session.abortCompaction();
         await waitBounded(session.abort(), CHILD_SHUTDOWN_TIMEOUT_MS);
         await shutdownAndDisposeChildSession(session);
         Queue.endUnsafe(events);
@@ -579,6 +581,27 @@ const makePiSession = (
           }
           return Effect.sync(() => startRun(text));
         }),
+      compact: Effect.tryPromise({
+        try: async () => {
+          if (state.closed) throw new Error("Subagent session is closed.");
+          if (session.isStreaming) {
+            throw new Error("Wait for the subagent to settle before compacting it.");
+          }
+          const result = await session.compact(
+            "Preserve decisions, artifact paths, checks, limitations, and outstanding work needed for the next assignment.",
+          );
+          emitUsage();
+          return {
+            tokensBefore: result.tokensBefore,
+            estimatedTokensAfter: result.estimatedTokensAfter,
+          };
+        },
+        catch: (error) => new CompactError({ message: boundedError(error) }),
+      }).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => session.abortCompaction()),
+        ),
+      ),
       interrupt: Effect.promise(async () => {
         if (state.closed) return;
         try {
@@ -606,7 +629,12 @@ const makePiSession = (
 
 export const piBackend: SubagentBackend = {
   name: "pi",
-  capabilities: { steering: true, modelSelection: true, reasoningEffort: true },
+  capabilities: {
+    steering: true,
+    modelSelection: true,
+    reasoningEffort: true,
+    compaction: true,
+  },
   // In-process SDK: always available.
   available: Effect.succeed(true),
   spawn: makePiSession,

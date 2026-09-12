@@ -12,6 +12,7 @@ import type { Effect, Scope, Stream } from "effect";
 import { Context } from "effect";
 import type {
   BackendName,
+  CompactError,
   SendError,
   SpawnError,
   SpawnTask,
@@ -24,6 +25,13 @@ export interface BackendCapabilities {
   readonly steering: boolean;
   readonly modelSelection: boolean;
   readonly reasoningEffort: boolean;
+  /** Can compact a settled session before it is reused. */
+  readonly compaction: boolean;
+}
+
+export interface SessionCompactionResult {
+  readonly tokensBefore: number;
+  readonly estimatedTokensAfter?: number;
 }
 
 /**
@@ -43,6 +51,8 @@ export interface SubagentSession {
    * semantics — the "is a run active" decision is backend-native state).
    */
   send(text: string): Effect.Effect<void, SendError>;
+  /** Compact an idle session. Present only when the backend advertises it. */
+  readonly compact?: Effect.Effect<SessionCompactionResult, CompactError>;
   /**
    * Interrupt the active run. Resolves once the backend acknowledges; the
    * corresponding RunSettled(Interrupted) arrives on `events`. Callers bound

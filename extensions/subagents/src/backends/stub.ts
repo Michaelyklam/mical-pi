@@ -35,6 +35,10 @@ export interface StubProfile {
   readonly toolName: string;
   /** Delay between scripted events; varies per backend so streams differ. */
   readonly cadenceMs: number;
+  /** Test-only support for the Pi session compaction contract. */
+  readonly compaction?: boolean;
+  /** Override final context occupancy for compaction tests. */
+  readonly contextTokens?: number;
 }
 
 const STUB_DIR = path.join(os.tmpdir(), "subagents-stub");
@@ -47,6 +51,7 @@ export function makeStubBackend(profile: StubProfile): SubagentBackend {
       steering: true,
       modelSelection: true,
       reasoningEffort: true,
+      compaction: profile.compaction === true,
     },
     // Real impls probe binary-on-PATH / SDK import / credentials here.
     available: Effect.succeed(true),
@@ -91,6 +96,7 @@ const makeStubSession = (
       closed: false,
       /** True between the driver dequeuing a prompt and registering its turn fiber. */
       dispatching: false,
+      contextTokens: 0,
     };
 
     const events = yield* Queue.make<SubagentEvent, Cause.Done>();
@@ -108,6 +114,8 @@ const makeStubSession = (
         }
         if (event._tag === "MetaChanged") {
           state.meta = { ...state.meta, ...event.meta };
+        } else if (event._tag === "UsageChanged" && event.tokens !== undefined) {
+          state.contextTokens = event.tokens;
         }
         return Queue.offer(events, event);
       }).pipe(Effect.asVoid);
@@ -191,7 +199,9 @@ const makeStubSession = (
         });
         yield* emit({
           _tag: "UsageChanged",
-          tokens: Math.min(profile.contextWindow, 2400 * (turn + 1) + 900),
+          tokens:
+            profile.contextTokens ??
+            Math.min(profile.contextWindow, 2400 * (turn + 1) + 900),
           contextWindow: profile.contextWindow,
           costUsd: 0.015 * (turn + 1),
         });
@@ -268,6 +278,20 @@ const makeStubSession = (
       meta: Effect.sync(() => state.meta),
       events: Stream.fromQueue(events),
       send: submit,
+      ...(profile.compaction
+        ? {
+            compact: Effect.gen(function* () {
+              const tokensBefore = state.contextTokens;
+              const estimatedTokensAfter = Math.min(tokensBefore, 10_000);
+              yield* emit({
+                _tag: "UsageChanged",
+                tokens: estimatedTokensAfter,
+                contextWindow: profile.contextWindow,
+              });
+              return { tokensBefore, estimatedTokensAfter };
+            }),
+          }
+        : {}),
       interrupt: Effect.gen(function* () {
         // Drop queued prompts so interrupting cannot immediately start
         // another turn, then stop the active turn. A prompt may be mid-flight
