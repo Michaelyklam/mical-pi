@@ -21,7 +21,7 @@ extensions/self-compact/
   summary.ts      # native compaction engine bridge (uses Pi's compact())
   state.ts        # persisted state snapshot + recovery reducer
   prompts.ts      # prompt file discovery/templating
-  variants.ts     # A/B variant definitions (control + experimental prompt surface)
+  guidance.ts     # agent-facing text: tool description, system-prompt line, trigger messages
   context-bar.ts  # 20-cell context bar renderer
   prompts/        # vendored default prompt files (see prompts.ts)
   LICENSE         # upstream MIT license, unchanged
@@ -72,110 +72,23 @@ separate extensions.
    other. `/self-compact-info` lists the setting, and the rest of the extension (guidance, lock,
    `view_context`, `self_compact`) works the same with the bar disabled.
 
-6. **Compaction mode: `self_compact` vs `self_compact_experimental`** (`variants.ts`, `state.ts`,
-   `index.ts`, tests). The extension exposes two self-compaction tools that share the whole engine
-   (same thresholds, forced lock, note handoff, and persisted state) and differ only in the prompt
-   the agent sees.
+6. **Proactive compaction, one tool, derived lock** (`guidance.ts`, `index.ts`, `state.ts`, tests).
+   The agent-facing text lives in `guidance.ts`: the tool description, guidelines, and system-prompt
+   line all tell the agent to compact on its own judgement at natural checkpoints once
+   `TOOL_CALL_TRIGGER` (10) ordinary tool calls have accumulated, with the token thresholds as a
+   backstop. `index.ts` counts ordinary tool calls (not `self_compact`, not `view_context`) and
+   sends two extra trigger messages, `CHECKPOINT` mid-run and `RUN ENDED` as a follow-up turn after
+   a heavy run. All triggers (those two, the three threshold levels, and the idle `now` nudge) go
+   through one `fire()` that sends a `self-compact-guidance` message once per compaction cycle and
+   restores its once-per-cycle guard from the context on reload or compaction. The forced lock is
+   derived (`activeHandoff() || level === "forced" && compactable`) instead of persisted; older
+   state snapshots that carry `locked` are read and the field dropped. Usage is re-read in
+   `message_end`, `tool_call`, `context`, and `agent_end`; the `turn_end` hook is gone.
 
-   - Variant A is the existing `self_compact` tool and remains the default control. Both tools are
-     registered at load, because registration is not exposure: the selected mode decides which one
-     is active, and Pi renders prompt snippets, guidelines, and descriptions from active tools only.
-   - The mode is a per-session choice made with `/self-compact-mode`: an interactive `ctx.ui.select`
-     picker (`Control`, `Experimental`, `Off`) plus `control|experimental|off` and the `a|b|none`
-     aliases as arguments for noninteractive runs. It is stored as a durable custom entry
-     (`self-compact-mode`) in that session and read back by `recoverMode()` on start, resume, reload,
-     and tree navigation, so two sessions can run different arms at the same time. The command makes
-     no model turn. A fresh session starts on Control, and `--compact-experimental` bootstraps a new
-     session onto the Experimental mode.
-   - `applyMode()` is the only place that changes the tool set: it removes both variant names from
-     `pi.getActiveTools()`, adds the selected one, and calls `pi.setActiveTools`, which preserves
-     every unrelated and foreign tool. Pi's hard filters still win, so a mode whose tool
-     `--tools`/`--exclude-tools` denies is reported as blocked in `/self-compact-info` and in a
-     warning, and nothing is persisted. A user switch is transactional: the exact tool set read
-     before the attempt is put back, so a refused switch leaves the previous variant running with
-     every unrelated tool. Startup recovery rolls back to passive instead (both variants trimmed),
-     because Pi activates every registered extension tool while it builds the runtime and the set
-     read there can already contain a variant the session never selected.
-   - `Off` restores native compaction: no guidance, no lock, no timers, and `session_before_compact`
-     returns `undefined` again. A pending note makes a switch to `Off` be refused until the handoff
-     settles, and a resumed session whose saved mode is `Off` with a note pending falls back to a
-     compaction-capable mode, so a saved note is never stranded.
-   - Variant B's prompt is the user's A/B-test wording, kept verbatim in `variants.ts`
-     (`EXPERIMENTAL_PROMPT`) and exposed on every prompt surface: tool description, prompt snippet,
-     prompt guidelines, the `note_to_self` parameter description, and the once-per-crossing notice/
-     warning/forced guidance message.
-   - Tool selection stays Pi's: `--tools` (strict allowlist) and `--exclude-tools` (denylist) cover
-     extension tools, and the extension reads `pi.getActiveTools()` for both `enabled()` and the
-     variant it targets. Exactly one variant is active in every mode, so every extension-generated
-     message names the selected one and the inactive arm never reaches a request. When neither can
-     be active the extension is passive: native compaction is not cancelled, tools are never
-     locked, and no guidance is sent. The read-only `view_context` tool stays registered, since it
-     changes nothing, `Off` included.
-   - Variant A keeps reading the vendored, user-overridable `.pi/self-compact/USER_PROMPT_*.md`
-     files and is byte-identical to before this change. Variant B never reads those files, so file
-     overrides cannot leak into the experiment arm.
-
-   Mode matrix:
-
-   | mode | active variant | how to select it |
-   | --- | --- | --- |
-   | `Control` (default) | `self_compact` | `/self-compact-mode control`, or nothing for a new session |
-   | `Experimental` | `self_compact_experimental` | `/self-compact-mode experimental`, or `--compact-experimental` for a new session |
-   | `Off` | none, native compaction untouched | `/self-compact-mode off` |
-
-   The earlier flag matrix (`--exclude-tools self_compact` to run B alone) is no longer needed: the
-   mode selects one variant by itself, and `--exclude-tools` is only a hard filter that can block a
-   selection.
-
-   Scope and limits of the experiment: both variants expose the same `note_to_self` schema and the
-   same compaction prompt (`preferences`/`USER_PROMPT_COMPACTION_MESSAGE.md`), so the promoted
-   summary engine is held constant. Thresholds and the forced-lock behaviour are shared code, not
-   per-variant settings. `/self-compact-info` reports the active variants and the primary tool.
-
-   Subagents are outside the experiment.
-   `extensions/subagents/src/backends/pi.ts` builds every child with
-   `createAgentSession({ excludeTools: CHILD_EXCLUDED_TOOL_NAMES })` and forwards no parent CLI
-   flags or mode entries, so `--compact-experimental` and a parent's Experimental mode never reach a
-   child: children always run variant A, and B is registered there like any extension tool but stays
-   inactive. A real child session was inspected for this: its active tools were `self_compact`
-   and `view_context` (no `self_compact_experimental`), and its system prompt carried control's
-   snippet and guidelines. Per-child variant selection is not available today. The only
-   subagents-side lever is `CHILD_EXCLUDED_TOOL_NAMES`, which can turn self-compaction off inside
-   children by excluding `self_compact` but cannot select B. Pi's `ExtensionRunner` exposes
-   `getFlagValues()` and `setFlagValue()` if that forwarding is ever wired up. The subagents
-   extension was not changed.
-
-   Runtime verification (real `pi` startup, fake provider, no billed request):
-
-   - Harness: a local OpenAI-completions server records each request body and returns a canned SSE
-     stream, a test-only extension registers the `fake` provider, and `pi` runs in print mode as
-     `pi -ne -e <provider> -e extensions/self-compact/index.ts -p hi`. `node --test run.mjs` runs 11
-     checks, all passing.
-   - Control (the default): active tools `bash, edit, read, self_compact, view_context, write`;
-     control snippet and guidelines present; the exact B prompt absent.
-   - `--compact-experimental`: active tools `bash, edit, read, self_compact_experimental,
-     view_context, write`, so the flag selects one arm instead of adding B next to A. The request
-     carries B's snippet, guidelines, and note description, and no control snippet, control
-     guideline, control note description, or bare `self_compact` appears anywhere in it.
-   - Experimental with `--exclude-tools self_compact`: B only, same request evidence.
-   - Experimental via `--tools read,bash,self_compact_experimental,view_context`: active tools are
-     exactly those four, so a strict allowlist selects B too.
-   - Passive (`--exclude-tools self_compact` without a mode that selects B, or both variants
-     excluded): no variant active, no self-compact system-prompt line, no control snippet, no B
-     prompt.
-   - Resume: turn 1 with `--compact-experimental` persisted the mode entry, and turn 2 with
-     `--continue` and no flag sent a request whose tools were `self_compact_experimental` and
-     `view_context` only, so the saved arm was restored.
-   - Deferred guidance: with the thresholds forced to 1/2/0 and a first response that calls a tool,
-     the second request contained the `[self-compact · ...]` guidance carrying the exact B prompt
-     and never the control name; the passive configuration showed no guidance at all.
-   - Real SDK checks (real `AgentSession`, real extension loader, real command dispatcher): the
-     picker and argument paths switch modes, preserve unrelated tools, persist exactly one mode
-     entry, and start no model turn (`messages` empty and no provider request); `session.reload()`
-     restored the saved arm and duplicated no entry; `Off`, an invalid argument, and a
-     `--tools`-denied selection all behaved as described above.
-
-No behavioural changes were made to `summary.ts`, `state.ts`, or `context-bar.ts`.
+   An earlier local version ran an A/B experiment with a second tool (`self_compact_experimental`),
+   a per-session `/self-compact-mode` selector, and transactional tool-set switching. It was
+   removed: the proactive wording is now the only wording, and the mode entries it persisted
+   (`self-compact-mode`) are ignored on read.
 
 7. **Append-only threshold guidance (prompt-cache boundary fix)** (`index.ts`, `cache-prefix.test.ts`,
    `extension.test.ts`, README). Upstream rebuilt one transient guidance message on every LLM call:
@@ -187,7 +100,7 @@ No behavioural changes were made to `summary.ts`, `state.ts`, or `context-bar.ts
    `custom_message` entry, which `convertToLlm` turns into a user message for the provider) and never
    edits or removes it afterwards; `view_context` reports the live numbers, so nothing needs
    re-rendering. The `context` hook now only detects crossings and returns `undefined`. The idle
-   nudge has its own customType (`self-compact-nudge`) so it is never filtered either. Per-epoch
+   nudge is sent the same way (key `now`). Per-epoch
    re-announcement is restored from the compaction-aware context projection, so a reload, resume, or
    `/tree` move never duplicates a guidance message already in the model's context, while a
    compaction that summarizes it away lets the new epoch announce again.
@@ -200,8 +113,7 @@ No behavioural changes were made to `summary.ts`, `state.ts`, or `context-bar.ts
    has to be written again on each turn. `cache-prefix.test.ts` drives the real extension through the
    real extension loader, models Pi's per-request pipeline (session projection -> `context` hook ->
    `convertToLlm`) and asserts that every request payload is an exact prefix extension of the
-   previous one across the notice/warning/forced crossings, a mode switch to `off`, a reload, and the
-   idle nudge. It uses no provider, no sleeps, and no fake server.
+   previous one across the notice/warning/forced crossings, a reload, and the idle nudge. It uses no provider, no sleeps, and no fake server.
 
 ## Native overflow behavior
 

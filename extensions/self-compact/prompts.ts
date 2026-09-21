@@ -44,7 +44,10 @@ export const TEMPLATE_KEYS = [
 	"remaining_to_forced",
 	"cycle",
 	"note_max_chars",
-	// Tool name the file-based (control) guidance should name; always "self_compact",
+	// Tool calls counted by the extension (excluding the self-compaction and view_context tools).
+	"tool_calls_since_compaction",
+	"tool_calls_this_run",
+	// Tool name the file-based guidance names; always "self_compact",
 	// kept so project overrides can reference the active tool explicitly.
 	"tool_name",
 ] as const;

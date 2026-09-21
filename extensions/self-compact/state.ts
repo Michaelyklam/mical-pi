@@ -1,11 +1,9 @@
 /**
  * Persisted state (one snapshot entry per change) and the pure recovery reducer.
  *
- * Merged design: a single `self-compact-state` snapshot (gpt-6-astra) plus branch checks for
- * "compaction landed but the note never came back" and "journaled but unanswered" (claude-fable-5-1).
+ * A single `self-compact-state` snapshot plus branch checks for "compaction landed but the note
+ * never came back" and "journaled but unanswered".
  */
-
-import type { CompactMode } from "./variants.ts";
 
 export type HandoffStatus = "pending" | "compacting" | "failed" | "ready" | "done";
 
@@ -22,7 +20,6 @@ export interface Handoff {
 export interface PersistedState {
 	version: 1;
 	cycle: number;
-	locked: boolean;
 	handoff?: Handoff;
 }
 
@@ -30,41 +27,18 @@ export interface PersistedState {
 export const STATE_TYPE = "self-compact-state";
 /** customType of the handoff message that returns the note (sent to the LLM). */
 export const HANDOFF_TYPE = "self-compact-handoff";
-/** customType of the TUI-only threshold-crossing line. */
-export const PHASE_ENTRY_TYPE = "self-compact-phase";
+/**
+ * customType of the model-facing trigger messages (threshold crossings and tool-call nudges).
+ * Pi journals each as a `custom_message` and turns it into a user message for the provider, so
+ * it is written once and never touched again: rewriting or dropping it would invalidate the
+ * provider's prefix cache. `details.key` identifies the trigger so a reload does not repeat it.
+ */
+export const GUIDANCE_TYPE = "self-compact-guidance";
 /** customType of /self-compact-info cards. */
 export const INFO_ENTRY_TYPE = "self-compact-info";
-/** customType of the selected-mode entry (durable per session, not sent to the LLM). */
-export const MODE_ENTRY_TYPE = "self-compact-mode";
-
-/**
- * The mode a session selected, persisted as a custom entry on the session branch so
- * it survives reload and resume and follows /tree navigation.
- */
-export interface ModeEntry {
-	version: 1;
-	mode: CompactMode;
-	/** How the mode came to be: a picker/argument switch, or the CLI bootstrap. */
-	source: "user" | "session" | "flag";
-	at: number;
-}
-
-const MODES: readonly CompactMode[] = ["control", "experimental", "off"];
-
-function isModeEntry(entry: EntryLike): entry is EntryLike & { data: ModeEntry } {
-	const data = entry.data as ModeEntry | undefined;
-	return entry.type === "custom" && entry.customType === MODE_ENTRY_TYPE && data?.version === 1 && MODES.includes(data.mode);
-}
-
-/** Latest selected mode on the branch, or undefined when the session never selected one. */
-export function recoverMode(entries: EntryLike[]): ModeEntry | undefined {
-	let found: ModeEntry | undefined;
-	for (const entry of entries) if (isModeEntry(entry)) found = entry.data;
-	return found;
-}
 
 export function emptyState(): PersistedState {
-	return { version: 1, cycle: 0, locked: false };
+	return { version: 1, cycle: 0 };
 }
 
 /** Minimal structural view of the session entries we care about (subset of Pi's SessionEntry). */
@@ -95,7 +69,8 @@ function isState(entry: EntryLike): entry is EntryLike & { data: PersistedState 
 export function recoverState(entries: EntryLike[]): RecoveredState {
 	let state = emptyState();
 	for (const entry of entries) {
-		if (isState(entry)) state = structuredClone(entry.data);
+		// Older snapshots carry a `locked` flag; the lock is derived now, so it is dropped on read.
+		if (isState(entry)) state = { version: 1, cycle: entry.data.cycle, handoff: entry.data.handoff ? structuredClone(entry.data.handoff) : undefined };
 	}
 	const result: RecoveredState = { state, journaledUnanswered: false, answered: false };
 	const h = state.handoff;

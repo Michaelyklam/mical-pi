@@ -37,7 +37,6 @@ const EXPECTED_HOOKS = [
 	"context",
 	"message_end",
 	"tool_call",
-	"turn_end",
 	"agent_end",
 	"agent_settled",
 	"session_before_compact",
@@ -77,19 +76,11 @@ async function host(
 		flags?: Dict;
 		settings?: Dict;
 		window?: number;
-		excludedTools?: string[];
-		allowTools?: string[];
 		/** Resume: reuse the entries of another host so this instance recovers its branch. */
 		entries?: any[];
-		/** What a scripted `ctx.ui.select` returns (the picker path). */
-		selectChoice?: string | ((labels: string[]) => string | undefined);
-		/** Extra registered tools attributed to other extensions (mode switching must not touch them). */
-		tools?: Dict;
 	} = {},
 ) {
 	const { flags = {}, settings = { compaction: { keepRecentTokens: 100 } }, window = 200_000 } = options;
-	const excludedTools = new Set(options.excludedTools ?? []);
-	const allowTools = options.allowTools ? new Set(options.allowTools) : undefined;
 	const cwd = mkdtempSync(join(tmpdir(), "self-compact-it-"));
 	mkdirSync(join(cwd, ".pi"), { recursive: true });
 	writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify(settings));
@@ -103,28 +94,17 @@ async function host(
 	const notices: any[] = [];
 	const compactions: any[] = [];
 	const requests: any[] = [];
-	const selects: any[] = [];
 	let tokens = 0;
 	let footer: any;
 
-	for (const [name, definition] of Object.entries(options.tools ?? {})) extension.tools.set(name, { name, ...definition });
-
 	for (const [key, value] of Object.entries(flags)) loaded.runtime.flagValues.set(key, value);
 	loaded.runtime.appendEntry = (customType: string, data: any) => entries.push({ type: "custom", customType, data });
-	loaded.runtime.sendMessage = (message: any, messageOptions: any) => messages.push({ ...message, options: messageOptions });
-	// Model Pi's tool selection for extension tools: every registered extension tool is active
-	// unless a strict --tools allowlist or an --exclude-tools entry removes it. A tool registered
-	// later (variant B) joins the active set automatically, exactly like Pi's refreshTools().
-	// `setActiveTools` keeps only registered tools the filters allow and ignores the rest, so a
-	// filtered selection is observable as "the tool did not come up".
-	const allowedTools = () =>
-		[...extension.tools.keys()].filter((name: string) => (!allowTools || allowTools.has(name)) && !excludedTools.has(name));
-	let activeTools: string[] | undefined;
-	loaded.runtime.getActiveTools = () => activeTools ?? allowedTools();
-	loaded.runtime.setActiveTools = (names: string[]) => {
-		const allowed = new Set(allowedTools());
-		activeTools = [...new Set(names)].filter((name: string) => allowed.has(name));
+	// Pi journals every sent custom message on the branch; model it so reload recovery sees what the model saw.
+	loaded.runtime.sendMessage = (message: any, messageOptions: any) => {
+		messages.push({ ...message, options: messageOptions });
+		entries.push({ type: "custom_message", id: `m${messages.length}`, parentId: entries.at(-1)?.id ?? null, timestamp: new Date().toISOString(), customType: message.customType, content: message.content, display: message.display, details: message.details });
 	};
+	loaded.runtime.getActiveTools = () => [...extension.tools.keys()];
 
 	const ctx: any = {
 		cwd,
@@ -132,16 +112,19 @@ async function host(
 		hasUI: true,
 		thinkingLevel: "off",
 		model: { id: "test-model", provider: "fake", contextWindow: window, maxTokens: 8192, api: "openai-completions", reasoning: true },
-		sessionManager: { getBranch: () => entries },
+		sessionManager: {
+			getBranch: () => entries,
+			// What the model still sees: everything after the last compaction entry (Pi replaces the rest with the summary).
+			buildContextEntries: () => {
+				const last = entries.findLastIndex((entry: any) => entry.type === "compaction");
+				return last < 0 ? entries : entries.slice(last);
+			},
+		},
 		getContextUsage: () => ({ tokens, contextWindow: window, percent: tokens / window * 100 }),
 		isIdle: () => true,
 		compact: (compactOptions: any) => compactions.push(compactOptions),
 		ui: {
 			notify: (message: string, type: string) => notices.push({ message, type }),
-			select: async (title: string, labels: string[]) => {
-				selects.push({ title, labels });
-				return typeof options.selectChoice === "function" ? options.selectChoice(labels) : options.selectChoice;
-			},
 			setFooter: (factory: any) => { footer = factory; },
 			setStatus() {},
 		},
@@ -173,20 +156,16 @@ async function host(
 	return {
 		extension, ctx, entries, messages, notices, compactions, requests, emit,
 		usage: (value: number) => { tokens = value; },
-		activeTools: (): string[] => loaded.runtime.getActiveTools(),
-		mode: (): any => [...entries].reverse().find((entry: any) => entry.customType === "self-compact-mode")?.data ?? null,
-		setMode: (arg = "") => extension.commands.get("self-compact-mode").handler(arg, ctx),
 		infoData: (): any => entries.filter((entry: any) => entry.customType === "self-compact-info").at(-1)?.data,
-		selects,
 		execute: (note = "NEXT ACTION: continue") =>
 			extension.tools.get("self_compact").definition.execute("call", { note_to_self: note }, undefined, undefined, ctx),
 		definition: (name = "self_compact") => extension.tools.get(name).definition,
-		guidance: async () => {
-			// The context hook only detects the crossing; the guidance itself is persisted once as a
-			// session message (append-only, so the provider cache prefix survives).
-			await emit("context", { messages: [] });
-			const message = [...messages].reverse().find((m: any) => m.customType === "self-compact-guidance");
-			return typeof message?.content === "string" ? message.content : undefined;
+		/** Every model-facing trigger message sent so far (threshold guidance and nudges share one customType). */
+		sent: () => messages.filter((m: any) => m.customType === "self-compact-guidance"),
+		/** Model a landed compaction: Pi appends the compaction entry, then fires session_compact. */
+		compacted: async () => {
+			entries.push({ type: "compaction", id: `k${entries.length}`, parentId: entries.at(-1)?.id ?? null, timestamp: new Date().toISOString(), summary: "summary", firstKeptEntryId: null, tokensBefore: tokens, details: {} });
+			await emit("session_compact", { reason: "manual", compactionEntry: entries.at(-1) });
 		},
 		view: () => extension.tools.get("view_context").definition.execute("view", {}, undefined, undefined, ctx),
 		info: () => extension.commands.get("self-compact-info").handler("", ctx),
@@ -211,7 +190,7 @@ test("discovery: the package subdirectory exposes exactly index.ts (helpers are 
 	const paths = discovered.extensions.map((extension: any) => realpathSync(extension.path));
 	assert.equal(paths.length, 1, `expected one entry point, got ${JSON.stringify(paths)}`);
 	assert.equal(paths[0], realpathSync(ENTRY));
-	for (const helper of ["defaults.ts", "thresholds.ts", "summary.ts", "state.ts", "prompts.ts", "context-bar.ts", "variants.ts"]) {
+	for (const helper of ["defaults.ts", "thresholds.ts", "summary.ts", "state.ts", "prompts.ts", "context-bar.ts", "guidance.ts"]) {
 		assert.ok(!paths.some((path: string) => path.endsWith(`/self-compact/${helper}`)), `${helper} must not be loaded as an extension`);
 	}
 });
@@ -221,11 +200,11 @@ test("lifecycle: every registered hook, tool, command, flag and renderer loads o
 	for (const hook of EXPECTED_HOOKS) {
 		assert.ok((h.extension.handlers.get(hook)?.length ?? 0) >= 1, `missing ${hook} handler`);
 	}
-	assert.deepEqual([...h.extension.tools.keys()].sort(), ["self_compact", "self_compact_experimental", "view_context"]);
-	assert.deepEqual([...h.extension.commands.keys()].sort(), ["self-compact-info", "self-compact-mode", "self-compact-now"]);
-	assert.deepEqual([...h.extension.flags.keys()].sort(), ["compact-at", "compact-buffer", "compact-experimental", "compact-footer", "compact-prompt", "compact-soft-at"]);
-	assert.deepEqual([...(h.extension.entryRenderers?.keys() ?? [])].sort(), ["self-compact-info", "self-compact-phase"]);
-	assert.deepEqual([...h.extension.messageRenderers.keys()], ["self-compact-handoff"]);
+	assert.deepEqual([...h.extension.tools.keys()].sort(), ["self_compact", "view_context"]);
+	assert.deepEqual([...h.extension.commands.keys()].sort(), ["self-compact-info", "self-compact-now"]);
+	assert.deepEqual([...h.extension.flags.keys()].sort(), ["compact-at", "compact-buffer", "compact-footer", "compact-prompt", "compact-soft-at"]);
+	assert.deepEqual([...(h.extension.entryRenderers?.keys() ?? [])].sort(), ["self-compact-info"]);
+	assert.deepEqual([...h.extension.messageRenderers.keys()].sort(), ["self-compact-guidance", "self-compact-handoff"]);
 });
 
 test("view_context reports the fixed 1M-baseline defaults on a 1,000,000-token window", async (t) => {
@@ -258,14 +237,17 @@ test("view_context caps the forced line at 90% on the 272,000-token gpt-6-astra 
 test("native auto-compaction is cancelled and the forced lock blocks ordinary tools", async (t) => {
 	const h = await host(t, { settings: { compaction: { keepRecentTokens: 100, enabled: true } } });
 	assert.deepEqual(await h.emit("session_before_compact", { reason: "threshold" }), { cancel: true });
-	assert.equal((await h.emit("tool_call", { toolName: "read" })).block, true);
 	assert.deepEqual(await h.emit("session_before_compact", { reason: "overflow" }), { cancel: true });
+	assert.equal(await h.emit("tool_call", { toolName: "read" }), undefined, "below the forced line nothing is blocked");
+	h.usage(180_000); // forced on the 200k window (capped at 90%)
+	const blocked = await h.emit("tool_call", { toolName: "read" });
+	assert.equal(blocked.block, true);
+	assert.match(blocked.reason, /forced threshold/);
 });
 
 test("self_compact returns terminate, saves the note, and agent_settled starts ctx.compact()", async (t) => {
 	const h = await host(t);
 	h.usage(180_000);
-	await h.emit("turn_end");
 	const blocked = await h.emit("tool_call", { toolName: "read" });
 	assert.equal(blocked.block, true);
 	assert.match(blocked.reason, /self_compact/);
@@ -285,7 +267,6 @@ test("self_compact returns terminate, saves the note, and agent_settled starts c
 test("manual compaction runs Pi's native engine with the vendored prompt and returns the note verbatim", async (t) => {
 	const h = await host(t);
 	h.usage(180_000);
-	await h.emit("turn_end");
 	const note = "GOAL: ship it\nNEXT ACTION: run the tests";
 	await h.execute(note);
 
@@ -309,8 +290,9 @@ test("manual compaction runs Pi's native engine with the vendored prompt and ret
 	await h.emit("message_end", { message: { role: "custom", customType: "self-compact-handoff", details: handoffMessages()[0].details } });
 	const finalState = h.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data;
 	assert.equal(finalState.handoff.status, "done");
-	assert.equal(finalState.locked, false);
 	assert.equal(finalState.cycle, 1);
+	h.usage(50_000); // the compaction shrank the context
+	assert.equal((await h.view()).details.tools_locked, false, "the derived lock releases once the note is delivered");
 });
 
 test("the footer bar is opt-in so extensions/usage-footer keeps the footer by default", async (t) => {
@@ -330,395 +312,82 @@ test("a rejected explicit flag override leaves the extension inert and blocks ev
 	await assert.rejects(h.execute(), /inert/);
 });
 
-// ---------------------------------------------------------------- A/B variants
 
-const B = "self_compact_experimental";
-const A = "self_compact";
-const EXACT_B_PROMPT =
-	"if the current context contains many tool calls, compact your own context and turn them into summaries of what our overall goal is, what we are currently working on, and what steps we've been through including summaries of failures and possible next paths. Leave a message for yourself for what to prioritize next.";
-/** Matches the bare control tool name, not the `self_compact_experimental` prefix. */
-const BARE_A = /(?<![\w_])self_compact(?![\w_])/;
+// ------------------------------------------------------------------ triggers
 
-test("A-only (default): both variants are registered and only the control prompt is exposed", async (t) => {
-	const h = await host(t);
-	assert.deepEqual([...h.extension.tools.keys()].sort(), [A, B, "view_context"].sort(), "both variants are registered at load");
-	assert.equal(hasVariant(h, B), false, "variant B is registered but not active");
-	const control = h.definition(A);
-	assert.match(control.description, /note_to_self/);
-	assert.ok(!control.description.includes(EXACT_B_PROMPT), "the control tool must not carry the experimental prompt");
-	assert.ok(!control.promptGuidelines.some((g: string) => g.includes(EXACT_B_PROMPT)));
+test("the tool-call trigger sends one CHECKPOINT mid-run and one RUN ENDED after a heavy run, once per cycle", async (t) => {
+	const h = await host(t, { window: 1_000_000 });
+	h.usage(50_000); // well below every threshold: only the tool-call trigger can speak
+	const sys = await h.emit("before_agent_start", { systemPrompt: "BASE" });
+	assert.match(sys.systemPrompt, /self-compact \(proactive\)/);
+	assert.match(sys.systemPrompt, /do not wait for a threshold/);
 
+	for (let i = 0; i < 9; i++) assert.equal(await h.emit("tool_call", { toolName: "read", toolCallId: `c${i}` }), undefined);
+	assert.equal(h.sent().length, 0, "nine ordinary tool calls: nothing yet");
+	assert.equal(await h.emit("tool_call", { toolName: "view_context", toolCallId: "v" }), undefined);
+	assert.equal(h.sent().length, 0, "view_context does not count toward the trigger");
+	await h.emit("tool_call", { toolName: "bash", toolCallId: "c9" });
+	assert.equal(h.sent().length, 1, "the tenth ordinary tool call sends the checkpoint");
+	assert.match(h.sent()[0].content, /^\[self-compact · CHECKPOINT\] 10 tool calls since the last compaction/);
+	assert.match(h.sent()[0].content, /call `self_compact` as your only tool call/);
+	assert.equal(h.sent()[0].details.key, "checkpoint");
+	assert.equal(h.sent()[0].options.triggerTurn, false, "a mid-run message never starts a turn");
+
+	for (let i = 10; i < 15; i++) await h.emit("tool_call", { toolName: "read", toolCallId: `c${i}` });
+	assert.equal(h.sent().length, 1, "the checkpoint is sent once per cycle");
+
+	await h.emit("agent_end");
+	assert.equal(h.sent().length, 2, "a run with >= trigger tool calls gets a RUN ENDED follow-up");
+	assert.match(h.sent()[1].content, /^\[self-compact · RUN ENDED\] That run used 15 tool calls \(15 since the last compaction/);
+	assert.deepEqual(h.sent()[1].options, { triggerTurn: true, deliverAs: "followUp" });
+
+	// The follow-up turn runs inside the same agent loop (no before_agent_start): a compaction
+	// followed by another agent_end must not ask again.
+	await h.compacted();
+	await h.emit("agent_end");
+	await h.emit("agent_end");
+	assert.equal(h.sent().length, 2, "RUN ENDED is not re-fired after the compaction it asked for");
+	const view = (await h.view()).details;
+	assert.equal(view.tool_calls_since_compaction, 0, "compaction resets the counter");
+	assert.equal(view.tool_call_trigger, 10);
+
+	// A light run stays quiet; a heavy run in the new cycle fires again (once there is something to compact again).
+	h.entries.push(...seedEntries().map((entry) => ({ ...entry, id: `post-${entry.id}` })));
+	await h.emit("before_agent_start", { systemPrompt: "BASE" });
+	await h.emit("tool_call", { toolName: "read", toolCallId: "d0" });
+	await h.emit("agent_end");
+	assert.equal(h.sent().length, 2, "a light run sends nothing");
+	for (let i = 1; i <= 10; i++) await h.emit("tool_call", { toolName: "read", toolCallId: `d${i}` });
+	assert.equal(h.sent().length, 3, "the checkpoint re-arms in the new cycle");
+});
+
+test("past the warning line the idle nudge wins over RUN ENDED, and threshold guidance fires once per level", async (t) => {
+	const h = await host(t, { window: 1_000_000 });
 	h.usage(150_000);
-	await h.emit("turn_end");
-	const guidance = await h.guidance();
-	assert.ok(guidance, "A-only still sends threshold guidance");
-	assert.ok(BARE_A.test(guidance!), "the control guidance names self_compact");
-	assert.ok(!guidance!.includes(EXACT_B_PROMPT));
+	await h.emit("before_agent_start", { systemPrompt: "BASE" });
+	for (let i = 0; i < 12; i++) await h.emit("tool_call", { toolName: "read", toolCallId: `c${i}` });
+	assert.deepEqual(h.sent().map((m: any) => m.details.key), ["notice", "checkpoint"]);
 
-	const sys = await h.emit("before_agent_start", { systemPrompt: "BASE" });
-	assert.ok(sys.systemPrompt.includes(A));
-	assert.ok(!sys.systemPrompt.includes(B));
+	h.usage(250_000);
+	await h.emit("agent_end");
+	assert.deepEqual(h.sent().map((m: any) => m.details.key), ["notice", "checkpoint", "warning", "now"]);
+	await h.emit("agent_end");
+	assert.equal(h.sent().length, 4, "the idle nudge is sent once per cycle");
+
+	await h.emit("session_start", { reason: "reload" });
+	await h.emit("context", { messages: [] });
+	assert.equal(h.sent().length, 4, "a reload repeats nothing the model already has");
 });
 
-test("B-only: the exact experimental prompt is exposed verbatim and every extension message targets B", async (t) => {
-	const h = await host(t, { flags: { "compact-experimental": true }, excludedTools: [A] });
-	assert.deepEqual([...h.extension.tools.keys()].sort(), [A, B, "view_context"].sort(), "both variants are registered, A is excluded from the active set");
-
-	const experimental = h.definition(B);
-	assert.ok(experimental.description.includes(EXACT_B_PROMPT), "B's tool description carries the user's exact words");
-	assert.ok(experimental.promptGuidelines.includes(EXACT_B_PROMPT), "B's guidelines carry the user's exact words");
-	assert.match(experimental.parameters.properties.note_to_self.description, /Leave a message for yourself for what to prioritize next\./);
-	assert.equal(experimental.promptSnippet, EXACT_B_PROMPT);
-
-	h.usage(280_000);
-	await h.emit("turn_end");
-	const guidance = await h.guidance();
-	assert.ok(guidance, "B-only sends threshold guidance");
-	assert.ok(guidance!.includes(EXACT_B_PROMPT), "the rendered B guidance carries the exact prompt");
-	assert.match(guidance!, /`self_compact_experimental` now as your only tool call/);
-	assert.ok(!BARE_A.test(guidance!), "B guidance never tells the agent to call the unavailable control tool");
-
-	const sys = await h.emit("before_agent_start", { systemPrompt: "BASE" });
-	assert.match(sys.systemPrompt, /self_compact_experimental/);
-	assert.ok(!BARE_A.test(sys.systemPrompt), "the system prompt names only the enabled variant");
-
-	const blocked = await h.emit("tool_call", { toolName: "read" });
+test("a saved note derives the lock and silences every trigger until the handoff is done", async (t) => {
+	const h = await host(t, { window: 1_000_000 });
+	h.usage(50_000);
+	await h.execute("NEXT ACTION: continue");
+	assert.equal((await h.view()).details.tools_locked, true);
+	const blocked = await h.emit("tool_call", { toolName: "read", toolCallId: "x" });
 	assert.equal(blocked.block, true);
-	assert.match(blocked.reason, /self_compact_experimental/);
-	assert.ok(!BARE_A.test(blocked.reason), "the forced-lock reason names the enabled variant");
-	assert.equal(await h.emit("tool_call", { toolName: B }), undefined, "B is reachable while locked");
-	assert.ok((await h.emit("tool_call", { toolName: A })).block, "the excluded control tool stays blocked");
-});
-
-test("bootstrap: --compact-experimental selects the experimental mode and deactivates control", async (t) => {
-	const h = await host(t, { flags: { "compact-experimental": true } });
-	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [B], "the flag alone selects variant B, not both");
-	assert.deepEqual(modeEntries(h).at(-1).data.mode, "experimental");
-	assert.equal(modeEntries(h).at(-1).data.source, "flag");
-
-	h.usage(280_000);
-	await h.emit("turn_end");
-	const guidance = await h.guidance();
-	assert.ok(guidance.includes(EXACT_B_PROMPT), "the experimental arm is the one exposed");
-	assert.ok(!BARE_A.test(guidance), "the inactive control tool is never named");
-
-	const sys = await h.emit("before_agent_start", { systemPrompt: "BASE" });
-	assert.match(sys.systemPrompt, /self_compact_experimental/);
-	assert.ok(!BARE_A.test(sys.systemPrompt), "the system prompt names only the selected variant");
-
-	assert.ok((await h.emit("tool_call", { toolName: A })).block, "the forced lock does not treat the inactive variant as a compaction tool");
-	assert.equal(await h.emit("tool_call", { toolName: B }), undefined, "the selected variant stays reachable while locked");
-});
-
-test("neither enabled: the extension is passive, native compaction is preserved, and nothing deadlocks", async (t) => {
-	const h = await host(t, {
-		settings: { compaction: { keepRecentTokens: 100, enabled: true } },
-		excludedTools: [A, B],
-	});
-	h.usage(280_000);
-	await h.emit("turn_end");
-	assert.equal(await h.guidance(), undefined, "no guidance without a reachable tool");
-	assert.equal(await h.emit("tool_call", { toolName: "read" }), undefined, "ordinary tools are never blocked");
-	assert.equal(await h.emit("session_before_compact", { reason: "threshold" }), undefined, "native auto-compaction is not cancelled");
-	assert.equal(await h.emit("session_before_compact", { reason: "overflow" }), undefined, "native overflow recovery is preserved");
-	assert.equal(await h.emit("before_agent_start", { systemPrompt: "BASE" }), undefined, "no system-prompt line is appended");
-
-	await assert.rejects(
-		h.definition(A).execute("c", { note_to_self: "x" }, undefined, undefined, h.ctx),
-		/not enabled in this session/,
-	);
-	const before = h.messages.length;
-	await h.extension.commands.get("self-compact-now").handler("", h.ctx);
-	assert.equal(h.messages.length, before, "/self-compact-now sends nothing when no variant is enabled");
-	assert.ok(h.notices.some((notice) => /no self-compaction tool is enabled/.test(notice.message)));
-
-	await h.info();
-	const info = h.entries.filter((entry: any) => entry.customType === "self-compact-info").at(-1).data;
-	assert.deepEqual(info.variants, { control: false, experimental: false, enabled: false, primary: null });
-});
-
-test("A and B share the same thresholds, compaction engine, and handoff contract", async (t) => {
-	const a = await host(t);
-	const b = await host(t, { flags: { "compact-experimental": true }, excludedTools: [A] });
-	a.usage(150_000);
-	b.usage(150_000);
-	const viewA = JSON.parse((await a.view()).content[0].text);
-	const viewB = JSON.parse((await b.view()).content[0].text);
-	assert.deepEqual(viewB.thresholds, viewA.thresholds, "the prompt is the only variable; thresholds are identical");
-
-	a.usage(180_000);
-	b.usage(180_000);
-	await a.emit("turn_end");
-	await b.emit("turn_end");
-	const note = "GOAL: same engine\nNEXT ACTION: compare";
-	const ra = await a.definition(A).execute("call", { note_to_self: note }, undefined, undefined, a.ctx);
-	const rb = await b.definition(B).execute("call", { note_to_self: note }, undefined, undefined, b.ctx);
-	assert.equal(ra.terminate, true);
-	assert.equal(rb.terminate, true);
-	assert.equal(ra.details.noteChars, rb.details.noteChars);
-
-	const compactionA = await a.emit("session_before_compact", summaryEvent());
-	const compactionB = await b.emit("session_before_compact", summaryEvent());
-	assert.equal(
-		compactionA.compaction.details.selfCompact.promptSource,
-		compactionB.compaction.details.selfCompact.promptSource,
-		"both variants run the same vendored compaction prompt",
-	);
-	assert.match(String(compactionB.compaction.details.selfCompact.promptSource), /USER_PROMPT_COMPACTION_MESSAGE\.md$/);
-
-	for (const [host, details] of [[a, compactionA.compaction.details], [b, compactionB.compaction.details]] as const) {
-		await host.emit("session_compact", { reason: "manual", compactionEntry: { id: "c1", details } });
-		assert.equal(host.messages.at(-1).content, note, "the note is returned byte for byte");
-		await host.emit("message_end", { message: { role: "custom", customType: "self-compact-handoff", details: host.messages.at(-1).details } });
-		const final = host.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data;
-		assert.equal(final.handoff.status, "done");
-		assert.equal(final.locked, false);
-		assert.equal(final.cycle, 1);
-	}
-});
-
-test("B runs the shared handoff lifecycle: note, idle compaction, verbatim return, unlock", async (t) => {
-	const h = await host(t, { flags: { "compact-experimental": true }, excludedTools: [A] });
-	h.usage(180_000);
-	await h.emit("turn_end");
-	const note = "GOAL: variant B lifecycle\nNEXT ACTION: run the tests";
-	const result = await h.definition(B).execute("call", { note_to_self: note }, undefined, undefined, h.ctx);
-	assert.equal(result.terminate, true, "Pi must end the run after the note is saved");
-	assert.equal(h.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data.handoff.status, "pending");
-
-	await h.emit("agent_settled");
-	assert.equal(h.compactions.length, 1, "ctx.compact() runs once the agent is idle");
-	const compaction = await h.emit("session_before_compact", summaryEvent());
-	await h.emit("session_compact", { reason: "manual", compactionEntry: { id: "c1", details: compaction.compaction.details } });
-	assert.equal(h.messages.at(-1).content, note);
-	assert.equal(h.messages.at(-1).customType, "self-compact-handoff");
-	await h.emit("message_end", { message: { role: "custom", customType: "self-compact-handoff", details: h.messages.at(-1).details } });
-	const final = h.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data;
-	assert.equal(final.handoff.status, "done");
-	assert.equal(final.locked, false);
-	assert.equal(final.cycle, 1);
-});
-
-// ------------------------------------------------------- session mode selection
-
-const UNRELATED = "unrelated_tool";
-const unrelatedTool = {
-	label: "Unrelated",
-	description: "a tool owned by some other extension",
-	parameters: { type: "object", properties: {} },
-	execute: async () => ({ content: [{ type: "text", text: "unrelated" }] }),
-};
-const modeEntries = (h: any) => h.entries.filter((entry: any) => entry.customType === "self-compact-mode");
-const hasVariant = (h: any, name: string) => h.activeTools().includes(name);
-
-test("default is control, with no mode entry written and no other tool disturbed", async (t) => {
-	const h = await host(t, { tools: { [UNRELATED]: unrelatedTool } });
-	assert.equal(hasVariant(h, A), true);
-	assert.equal(hasVariant(h, B), false, "variant B is registered but not active");
-	assert.equal(h.extension.tools.has(B), true, "registration happens at load, not on selection");
-	assert.equal(h.activeTools().includes(UNRELATED), true);
-	assert.deepEqual(modeEntries(h), [], "the default needs no persisted entry");
-
-	const info = await h.info();
-	void info;
-	assert.equal(h.infoData().mode.selected, "control");
-	assert.equal(h.infoData().mode.source, "flag");
-	assert.equal(h.infoData().mode.persisted, false);
-});
-
-test("/self-compact-mode switches A -> B -> off -> A, exposing only the selected variant", async (t) => {
-	const h = await host(t, { tools: { [UNRELATED]: unrelatedTool } });
-
-	await h.setMode("experimental");
-	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [B], "variant B only");
-	assert.equal(h.activeTools().includes(UNRELATED), true, "unrelated tools are preserved");
-	assert.ok(h.extension.tools.has(B), "variant B stays registered while selected");
-	assert.deepEqual(modeEntries(h).at(-1).data.mode, "experimental");
-	assert.equal(modeEntries(h).at(-1).data.source, "user");
-
-	// The system-prompt line follows the selection, and B's prompt is the only arm exposed.
-	let sys = await h.emit("before_agent_start", { systemPrompt: "BASE" });
-	assert.match(sys.systemPrompt, /self_compact_experimental/);
-	assert.ok(!BARE_A.test(sys.systemPrompt), "no control tool name in the prompt");
-	h.usage(280_000);
-	await h.emit("turn_end");
-	const guidance = await h.guidance();
-	assert.ok(guidance.includes(EXACT_B_PROMPT), "the guidance carries variant B's exact prompt");
-	assert.ok(!BARE_A.test(guidance), "the guidance never names the inactive control tool");
-	assert.ok((await h.emit("tool_call", { toolName: A })).block, "the inactive variant is no longer a compaction tool");
-	assert.ok((await h.emit("tool_call", { toolName: "read" })).block, "the forced lock is live in B mode");
-	assert.equal(await h.emit("tool_call", { toolName: B }), undefined, "B is reachable while locked");
-
-	const guidanceBeforeOff = h.messages.filter((message: any) => message.customType === "self-compact-guidance").length;
-	await h.setMode("off");
-	assert.equal(await h.emit("session_before_compact", { reason: "threshold" }), undefined, "off restores native compaction");
-	assert.equal(await h.emit("session_before_compact", { reason: "overflow" }), undefined, "off restores native overflow recovery");
-	assert.equal((await h.guidance())?.includes(EXACT_B_PROMPT), true, "off never removes guidance the model already saw");
-	assert.equal(
-		h.messages.filter((message: any) => message.customType === "self-compact-guidance").length,
-		guidanceBeforeOff,
-		"off stops the reminders without rewriting the history",
-	);
-	assert.equal(await h.emit("before_agent_start", { systemPrompt: "BASE" }), undefined, "off appends no system-prompt line");
-	assert.equal(modeEntries(h).at(-1).data.mode, "off");
-
-	await h.setMode("a");
-	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [A], "back to control only");
-	assert.equal(h.activeTools().includes(UNRELATED), true);
-	assert.ok(h.extension.tools.has(B), "B stays registered but inactive");
-	h.usage(280_000);
-	await h.emit("turn_end");
-	const back = await h.guidance();
-	assert.ok(BARE_A.test(back), "control guidance is back");
-	assert.ok(!back.includes(EXACT_B_PROMPT));
-	sys = await h.emit("before_agent_start", { systemPrompt: "BASE" });
-	assert.ok(!sys.systemPrompt.includes(B), "the inactive variant leaves the system prompt too");
-	// Guidance messages are appended without starting a turn; nothing here may kick off a model run.
-	assert.equal(h.messages.filter((message: any) => message.options?.triggerTurn).length, 0, "switching modes never starts a model turn");
-});
-
-test("the picker path runs ctx.ui.select and applies the picked mode without a model turn", async (t) => {
-	const h = await host(t, { selectChoice: (labels: string[]) => labels.find((label) => label.startsWith("Experimental")) });
-	const messagesBefore = h.messages.length;
-	await h.setMode();
-	assert.equal(h.selects.length, 1, "one picker dialog");
-	assert.equal(h.selects[0].labels.length, 3, "Control, Experimental, Off");
-	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [B]);
-	assert.equal(modeEntries(h).at(-1).data.mode, "experimental");
-	assert.equal(h.messages.length, messagesBefore, "the picker command sends no message");
-
-	// Cancelling the picker changes nothing.
-	h.ctx.ui.select = async (title: string, labels: string[]) => { h.selects.push({ title, labels }); return undefined; };
-	await h.setMode();
-	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [B], "cancel keeps the mode");
-});
-
-test("a mode argument that is not a mode is reported and changes nothing", async (t) => {
-	const h = await host(t);
-	await h.setMode("self_compact");
-	assert.ok(h.notices.some((notice) => notice.type === "error" && /is not a mode/.test(notice.message)));
-	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [A]);
-	assert.deepEqual(modeEntries(h), [], "nothing is persisted for a bad argument");
-});
-
-test("the mode is durable per session: reload and resume keep it, /tree back reverts it", async (t) => {
-	const h1 = await host(t);
-	await h1.setMode("experimental");
-	assert.equal(modeEntries(h1).length, 1);
-
-	await h1.emit("session_start", { reason: "reload" });
-	assert.deepEqual(h1.activeTools().filter((name) => name === A || name === B), [B], "reload re-applies the saved mode");
-	assert.equal(modeEntries(h1).length, 1, "a reload never re-persists the mode");
-
-	const h2 = await host(t, { entries: h1.entries });
-	assert.deepEqual(h2.activeTools().filter((name) => name === A || name === B), [B], "resume re-applies the saved mode");
-	assert.equal(modeEntries(h2).length, 1);
-	await h2.info();
-	assert.equal(h2.infoData().mode.selected, "experimental");
-	assert.equal(h2.infoData().mode.source, "session");
-	assert.equal(h2.infoData().mode.persisted, true);
-	assert.equal(h2.infoData().variants.experimental, true);
-
-	// /tree to the leaf before the switch: the branch no longer carries the mode entry.
-	const modeIndex = h1.entries.findIndex((entry: any) => entry.customType === "self-compact-mode");
-	h1.entries.length = modeIndex;
-	await h1.emit("session_tree", { reason: "tree" });
-	assert.equal(modeEntries(h1).length, 0, "the default bootstrap writes no entry");
-	assert.deepEqual(h1.activeTools().filter((name) => name === A || name === B), [A], "tree navigation reverts to the branch mode");
-});
-
-test("a pending note blocks mode switching instead of being stranded", async (t) => {
-	const h = await host(t);
-	h.usage(180_000);
-	await h.emit("turn_end");
-	const note = "GOAL: keep the note\nNEXT ACTION: settle the handoff";
-	await h.execute(note);
-
-	await h.setMode("off");
-	assert.ok(h.notices.some((notice) => notice.type === "warning" && /cannot switch to off while a note is saved/.test(notice.message)));
-	assert.deepEqual(modeEntries(h), [], "a refused switch persists nothing");
-	assert.equal(h.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data.handoff.status, "pending", "the note is kept");
-	assert.equal(hasVariant(h, A), true, "the working mode is still active");
-	assert.ok((await h.emit("tool_call", { toolName: "read" })).block, "the lock still protects the pending note");
-
-	// Once the handoff settles the switch is allowed again.
-	await h.emit("agent_settled");
-	const compaction = await h.emit("session_before_compact", summaryEvent());
-	await h.emit("session_compact", { reason: "manual", compactionEntry: { id: "c1", details: compaction.compaction.details } });
-	assert.equal(h.messages.at(-1).content, note);
-	await h.emit("message_end", { message: { role: "custom", customType: "self-compact-handoff", details: h.messages.at(-1).details } });
-	assert.equal(h.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data.handoff.status, "done");
-
-	await h.setMode("off");
-	assert.equal(modeEntries(h).at(-1).data.mode, "off", "the switch works after the handoff is done");
-	assert.equal(hasVariant(h, A), false);
-});
-
-test("a CLI filter that denies a variant is reported and rolled back, and B can still be selected when allowed", async (t) => {
-	const h = await host(t, { allowTools: ["view_context", UNRELATED, B], tools: { [UNRELATED]: unrelatedTool } });
-	assert.equal(hasVariant(h, A), false, "--tools denies the control tool");
-	assert.equal(hasVariant(h, B), false, "B was never requested at startup");
-	assert.ok(h.notices.some((notice) => notice.type === "error" && /the control mode cannot be activated/.test(notice.message)));
-	assert.deepEqual(modeEntries(h), [], "a blocked bootstrap persists no mode entry");
-	assert.deepEqual(h.activeTools(), ["view_context", UNRELATED], "the blocked tool is not activated anyway");
-
-	const before = h.activeTools();
-	await h.setMode("control");
-	assert.ok(h.notices.some((notice) => notice.type === "error" && /cannot activate control/.test(notice.message) && /filters deny self_compact/.test(notice.message)));
-	assert.deepEqual(h.activeTools(), before, "a denied selection rolls the tool set back");
-	assert.deepEqual(modeEntries(h), [], "the refused mode is not persisted");
-	assert.equal(await h.emit("session_before_compact", { reason: "threshold" }), undefined, "the session stays passive and safe");
-	await h.info();
-	assert.equal(h.infoData().mode.selected, "control");
-	assert.match(h.infoData().mode.blocked, /filters deny self_compact/);
-
-	await h.setMode("experimental");
-	assert.ok(h.notices.some((notice) => notice.type === "info" && /mode experimental/.test(notice.message)));
-	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [B], "the allowed variant activates");
-	assert.equal(h.activeTools().includes(UNRELATED), true, "unrelated tools survive the failed and the successful switch");
-	await h.info();
-	assert.equal(h.infoData().mode.selected, "experimental");
-	assert.equal(h.infoData().mode.blocked, null);
-});
-
-test("a user switch Pi denies is transactional: the running mode stays fully active", async (t) => {
-	const h = await host(t, { excludedTools: [B], tools: { [UNRELATED]: unrelatedTool } });
-	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [A], "control is running");
-	assert.deepEqual(modeEntries(h), [], "the default mode persists nothing");
-	const before = h.activeTools();
-
-	await h.setMode("experimental");
-	assert.ok(
-		h.notices.some((notice) => notice.type === "error" && /cannot activate experimental/.test(notice.message) && /filters deny self_compact_experimental/.test(notice.message)),
-		"the refusal names the denied variant",
-	);
-	assert.ok(h.notices.some((notice) => /Nothing changed: the session still runs control/.test(notice.message)), "the message names the mode that is really running");
-	assert.deepEqual(h.activeTools(), before, "a refused switch restores the exact previous tool set");
-	assert.equal(hasVariant(h, A), true, "the running control tool is still active");
-	assert.equal(hasVariant(h, B), false, "the denied variant never comes up");
-	assert.equal(h.activeTools().includes(UNRELATED), true, "unrelated tools survive the refusal");
-	assert.deepEqual(modeEntries(h), [], "a refused switch persists nothing");
-	await h.info();
-	assert.equal(h.infoData().mode.selected, "control", "the effective mode is unchanged");
-	assert.equal(h.infoData().mode.blocked, null, "the mode that runs is not reported as blocked");
-	assert.deepEqual(await h.emit("session_before_compact", { reason: "threshold" }), { cancel: true }, "the restored mode still owns compaction");
-});
-
-test("a saved note is never stranded when no variant can be activated", async (t) => {
-	const h = await host(t, { entries: seedEntries(), window: 200_000 });
-	h.usage(280_000);
-	await h.emit("turn_end");
-	const note = "GOAL: stranded note\nNEXT ACTION: recover it";
-	await h.execute(note);
-	const state = h.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data;
-	assert.equal(state.handoff.status, "pending");
-
-	// Resume with both variants denied by the CLI: the note must be kept, warned about, and left unlocked.
-	const resumed = await host(t, { entries: h.entries, excludedTools: [A, B] });
-	assert.ok(resumed.notices.some((notice) => /saved note \(\d+ chars\) cannot be compacted/.test(notice.message)));
-	const resumedState = resumed.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data;
-	assert.equal(resumedState.handoff.status, "pending", "the note survives");
-	assert.equal(resumedState.handoff.note, note);
-	assert.equal(resumedState.locked, false, "no deadlock: nothing is locked without a reachable tool");
-	assert.equal(await resumed.emit("tool_call", { toolName: "read" }), undefined);
+	assert.match(blocked.reason, /note is saved and compaction is pending/);
+	h.usage(250_000);
+	await h.emit("agent_end");
+	assert.equal(h.sent().length, 0, "no guidance or nudge while a note is waiting");
 });

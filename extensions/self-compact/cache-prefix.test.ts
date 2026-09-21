@@ -35,16 +35,14 @@ const ENTRY = join(HERE, "index.ts");
 const PI_DIST = resolve(HERE, "..", "..", "node_modules", "@earendil-works", "pi-coding-agent", "dist");
 const loader: any = await import(pathToFileURL(join(PI_DIST, "core", "extensions", "loader.js")).href);
 
-const A = "self_compact";
 const GUIDANCE = "self-compact-guidance";
-/** Matches the bare control tool name, not the `self_compact_experimental` prefix. */
-const BARE_A = /(?<![\w_])self_compact(?![\w_])/;
+/** Keys of the threshold messages; the tool-call and idle nudges use the same customType with other keys. */
+const THRESHOLD_KEYS = new Set(["notice", "warning", "forced"]);
 /** 1M window: notice 100k, warning 200k, forced 300k (defaults.ts). */
 const WINDOW = 1_000_000;
 /** Small per-turn growth keeps a 30-turn run inside the notice band. */
 const STEP = 1_000;
 const START = 99_000;
-const B_PROMPT_FRAGMENT = "Leave a message for yourself for what to prioritize next.";
 
 // ------------------------------------------------------------------ modeling
 
@@ -260,8 +258,8 @@ async function host(t: TestContext, options: { flags?: Record<string, any>; excl
 			tokens = value;
 		},
 		hookRewrites: () => steps.filter((step) => step.hookRewrote).length,
-		guidance: () => sent.filter((message) => message.customType === GUIDANCE).map((message) => String(message.content)),
-		setMode: (mode: string) => extension.commands.get("self-compact-mode").handler(mode, ctx),
+		guidance: () => sent.filter((message) => message.customType === GUIDANCE && THRESHOLD_KEYS.has(message.details?.key)).map((message) => String(message.content)),
+		nudges: () => sent.filter((message) => message.customType === GUIDANCE && !THRESHOLD_KEYS.has(message.details?.key)),
 		endRun: async () => {
 			streaming = false;
 			await emit("agent_end", { messages: [] });
@@ -273,36 +271,19 @@ async function host(t: TestContext, options: { flags?: Record<string, any>; excl
 
 // --------------------------------------------------------------------- tests
 
-test("A (control): every request is an exact prefix extension of the last, across the notice crossing and 30 turns", async (t) => {
+test("every request is an exact prefix extension of the last, across the notice crossing and 30 turns", async (t) => {
 	const h = await host(t);
 	await h.runTurns(30);
-	assertAppendOnly(h.payloads(), "control arm");
+	assertAppendOnly(h.payloads(), "30 turns");
 	assert.equal(h.hookRewrites(), 0, "the context hook must never rewrite the message list: that is what discards the provider prefix cache");
 
 	const guidance = h.guidance();
 	assert.equal(guidance.length, 1, `exactly one guidance message is persisted per threshold, got ${guidance.length}`);
 	assert.match(guidance[0]!, /\[self-compact · notice\]/i);
-	assert.ok(BARE_A.test(guidance[0]!), "the control arm's guidance names the control tool");
-	assert.ok(!guidance[0]!.includes(B_PROMPT_FRAGMENT), "the control arm never carries variant B's prompt");
+	assert.match(guidance[0]!, /self_compact/);
 	// The snapshot is written once: later requests must repeat it byte for byte.
 	for (const payload of h.payloads().slice(2)) {
 		assert.deepEqual(guidanceBlocks(payload), [`user:${guidance[0]}`], "the persisted guidance is never re-rendered with new numbers");
-	}
-});
-
-test("B (experimental): the same append-only boundary with variant B's guidance", async (t) => {
-	const h = await host(t, { flags: { "compact-experimental": true }, excludedTools: [A] });
-	await h.runTurns(30);
-	assertAppendOnly(h.payloads(), "experimental arm");
-	assert.equal(h.hookRewrites(), 0);
-
-	const guidance = h.guidance();
-	assert.equal(guidance.length, 1);
-	assert.match(guidance[0]!, /\[self-compact · notice\]/i);
-	assert.ok(guidance[0]!.includes(B_PROMPT_FRAGMENT), "variant B's exact prompt reaches the model");
-	assert.ok(!BARE_A.test(guidance[0]!), "B guidance never names the unavailable control tool");
-	for (const payload of h.payloads().slice(2)) {
-		assert.deepEqual(guidanceBlocks(payload), [`user:${guidance[0]}`], "B's guidance snapshot is stable too");
 	}
 });
 
@@ -343,32 +324,15 @@ test("resume/reload re-announces nothing: the persisted guidance is not duplicat
 	assertAppendOnly(h.payloads(), "after a reload");
 });
 
-test("off: switching modes stops new guidance and leaves the existing history untouched", async (t) => {
-	const h = await host(t);
-	await h.runTurns(30);
-	const before = h.guidance();
-	assert.equal(before.length, 1);
-	const payloadsBefore = h.payloads().length;
-
-	await h.setMode("off");
-	h.setUsage(250_000); // Cross another threshold to prove off really suppresses guidance.
-	await h.runTurns(5);
-	assert.equal(h.guidance().length, 1, "off stops new guidance but never removes what the model already saw");
-	assert.equal(h.payloads().length, payloadsBefore + 5);
-	assertAppendOnly(h.payloads(), "after switching to off");
-	for (const payload of h.payloads().slice(payloadsBefore)) {
-		assert.deepEqual(guidanceBlocks(payload), [`user:${before[0]}`], "the earlier guidance stays in place after off");
-	}
-});
-
 test("the idle nudge is appended to the end of the transcript, never spliced into history", async (t) => {
 	const h = await host(t);
 	await h.runTurns(10); // crosses the notice line
 	h.setUsage(250_000); // the nudge is for the warning phase and above
 	await h.endRun();
-	const nudge = h.sent.filter((message) => message.customType !== GUIDANCE);
+	const nudge = h.nudges();
 	assert.equal(nudge.length, 1, "one idle nudge is sent once the run ends above the warning line");
-	assert.equal(nudge[0]!.customType, "self-compact-nudge");
+	assert.equal(nudge[0]!.details.key, "now");
+	assert.equal(nudge[0]!.options.deliverAs, "followUp");
 
 	await h.runTurns(5);
 	assertAppendOnly(h.payloads(), "after the idle nudge");

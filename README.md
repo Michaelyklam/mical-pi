@@ -37,6 +37,12 @@ Enable/disable individual resources with `pi config` (Tab switches global vs pro
 
 Personal development skills shared between Pi and Claude Code. Pi discovers them through this package; `~/.claude/skills` points to this directory for Claude Code. Standalone third-party skills are tracked in `.github/skill-sources.json` and checked weekly by `.github/workflows/sync-external-skills.yml`. Marketplace-published skill collections, including Matt Pocock's skills, are installed and updated through `extensions/claude-plugin-receiver` instead of being copied into this directory.
 
+### `skills/review-package`
+
+Default to an offline HTML review package when more than five questions need user review. Prefer it for smaller visual-comparison batches too. The user accepts/rejects proposals, leaves comments, and copies results into chat; later rounds retain scoped approvals on Passed and revisit only remaining or changed decisions.
+
+The skill bundles its own template, data-format guide, Python builder and feedback validator. It works across projects without the original game's files, a framework, or a delivery server. Review data stays in the project being reviewed. Load it with `/skill:review-package`, or let its description trigger it; `/reload` discovers it after a local update.
+
 ### `extensions/effort`
 
 Adds `/effort`, an interactive picker for the reasoning levels supported by the current model.
@@ -73,6 +79,26 @@ session remains saved and available through `/resume`.
 
 `/clear` accepts no arguments. Any argument produces a usage warning instead of being silently
 lost.
+
+### `extensions/skill-gate`
+
+Adds `/skill-gate`, a searchable picker (type to filter, space/enter to toggle) that turns
+individual skills on and off. The deny list persists to `~/.pi/agent/skill-gate.json` and is
+enforced in three layers:
+
+1. Denied skills are stripped from the system prompt on every turn, so the model never sees
+   their names or descriptions.
+2. `read`/`ls` calls into a denied skill's files, and `grep`/`find` calls that would descend
+   into them, are blocked through the `tool_call` hook (symlinks and `..` are resolved before
+   matching). The config file itself gets the same protection.
+3. `bash` commands mentioning those paths are blocked by string matching, best-effort only.
+
+A `skills: N off` footer status shows when any loaded skill is disabled. Toggles apply to the
+next turn's prompt. Deny entries whose skills are not loaded in the current project are kept in
+the file untouched, since project-local skills differ between repositories.
+
+This is a guardrail against accidental use, not a sandbox: the model runs shell commands as
+your user, so watertight secrecy requires OS-level permissions or a container.
 
 ### `extensions/fast-mode`
 
@@ -265,12 +291,8 @@ message (once per line per context epoch), the history is never rewritten, and t
 only detects crossings. The numbers in a guidance message are a snapshot; `view_context` gives the
 live ones, and each crossing still shows the full guidance text once in the TUI. `cache-prefix.test.ts`
 pins this boundary down by asserting that every request is an exact prefix extension of the last.
-For an A/B comparison, start fresh sessions and select the mode before the task. Switching modes
-changes the tool/system prompt and does not remove guidance already present in the conversation.
 
-The agent compacts by calling the enabled self-compaction tool (`self_compact` by default, or
-`self_compact_experimental` when the A/B experiment below is enabled) with a `note_to_self`. The
-note is saved, the run
+The agent compacts by calling `self_compact` with a `note_to_self`. The note is saved, the run
 ends, and Pi compacts once the agent is idle using this extension's compaction prompt. The note is
 returned to the agent byte for byte as the next message, so it resumes from its own `NEXT ACTION`
 without a new user prompt. `view_context` returns the current tokens, percent, level, and resolved
@@ -303,74 +325,33 @@ fields are clamped down and reported in `/self-compact-info`; an explicit flag t
 ordering or the cap is rejected and leaves the extension inert with every tool blocked. Clamping is
 per field, so setting one flag does not disable clamping for the others.
 
-#### Compaction mode: `self_compact` (control) vs `self_compact_experimental` (experiment)
+#### Proactive compaction: the agent decides, the extension nudges
 
-The extension ships two self-compaction tools that share the entire engine (thresholds, forced
-lock, note handoff, persisted state) and differ only in the prompt the agent sees. Variant A is the
-existing `self_compact` tool and is the default control. Variant B is
-`self_compact_experimental`, and its tool description, prompt snippet, guidelines, note parameter,
-and threshold messages use the exact wording requested for the experiment:
+The agent is told to compact on its own judgement, well before any token threshold, whenever a
+stretch of tool calls is finished and their verbatim output is no longer needed (`PROMPT` in
+`guidance.ts`; it appears in the tool description, the guidelines, and the system-prompt line).
+The extension backs that up with triggers. Each sends one appended message to the model, once per
+compaction cycle, and none is ever rewritten or removed afterwards:
 
-> if the current context contains many tool calls, compact your own context and turn them into
-> summaries of what our overall goal is, what we are currently working on, and what steps we've been
-> through including summaries of failures and possible next paths. Leave a message for yourself for
-> what to prioritize next.
+| trigger | when | delivery |
+| --- | --- | --- |
+| `CHECKPOINT` | the `TOOL_CALL_TRIGGER`th (10th) ordinary tool call since the last compaction, mid-run | appended, waits for the next turn |
+| `RUN ENDED` | a run ends having used at least 10 ordinary tool calls | follow-up turn, so the compaction happens while the user is typing |
+| `notice` / `warning` / `forced` | the token thresholds above | appended |
+| `now` | a run ends past the warning line (or while locked) | follow-up turn |
 
-`/self-compact-mode` picks the mode for the current session with a picker (`Control`,
-`Experimental`, `Off`). Arguments skip the picker, which is what scripts and noninteractive runs
-use: `/self-compact-mode experimental`, `/self-compact-mode control`, `/self-compact-mode off`
-(`a`, `b`, and `none` are accepted aliases). The choice is stored as a durable entry in that
-session only, so two Pi sessions can run different arms side by side and a resumed session keeps
-its arm. New sessions start on Control. The command makes no model turn.
-
-Both tools are registered at load, because registration is not exposure: exactly one variant is
-active at a time, and Pi renders prompt snippets, guidelines, and tool descriptions from active
-tools only. The extension reads `pi.getActiveTools()` and targets the enabled variant in the
-system-prompt line, threshold messages, forced-lock errors, and commands, so the inactive arm never
-appears in a request.
-
-| mode | what the session runs |
-| --- | --- |
-| `Control` (default) | `self_compact` only |
-| `Experimental` | `self_compact_experimental` only |
-| `Off` | neither; Pi's automatic compaction is left alone and no tool is ever locked |
-
-A session that saves a note and then switches to `Off` is refused until the handoff settles, so a
-saved note is never stranded; resuming a session whose mode is `Off` while a note is pending falls
-back to a compaction-capable mode instead.
-
-One flag still bootstraps a new session you do not want to switch by hand: `--compact-experimental`
-starts it on the Experimental mode and persists that choice like a picker switch. `--tools` and
-`--exclude-tools` stay Pi's hard filters, and they win. A switch that Pi refuses is transactional:
-the previous variant keeps running with every unrelated tool, the refusal is reported, and nothing
-is persisted. A saved mode that Pi refuses at startup leaves the session passive instead, reported
-in `/self-compact-info` and in a warning, rather than pretending the mode is live. `--tools` is a
-strict allowlist across *all* tools, so `--exclude-tools` is the cleaner filter for one variant.
-
-Read-only `view_context` stays registered in every mode, `Off` included, because it changes nothing.
-`/self-compact-info` reports the mode, its source (picker, saved entry, or CLI bootstrap), and
-whether the selection is blocked; `/self-compact-now` targets the enabled variant and refuses when
-the mode is `Off`. Variant A keeps reading the vendored, user-overridable prompt files under
-`.pi/self-compact/`; variant B always uses the experimental wording, so those overrides only affect
-A.
-
-Pi subagents are outside the experiment. A child session is built with
-`createAgentSession({ excludeTools: CHILD_EXCLUDED_TOOL_NAMES })` in
-`extensions/subagents/src/backends/pi.ts` and inherits neither the parent's CLI flags nor its mode
-entry, so `--compact-experimental` and a parent's Experimental mode never reach a child. Every
-child therefore runs variant A and B stays inactive there; `--tools` and `--exclude-tools` are not
-forwarded either. Per-child variant selection is not available today. The only lever in the
-subagents source is `CHILD_EXCLUDED_TOOL_NAMES`, which can turn self-compaction off inside children
-by excluding `self_compact`, but cannot select variant B. Pi's `ExtensionRunner` exposes
-`getFlagValues()` and `setFlagValue()` if that forwarding is ever wired up.
+`self_compact` and `view_context` calls do not count toward the trigger. `view_context` reports
+`tool_calls_since_compaction`, `tool_calls_this_run`, and `tool_call_trigger`. While a note is
+waiting to be compacted, or past the forced line with material to compact, every other tool is
+blocked; that lock is derived from the state, not stored, so a reload can never leave it stuck on.
 
 Vendored from
 [disler/self-compact-pi-agent](https://github.com/disler/self-compact-pi-agent/tree/576fe4abda021849f5cde5b6f5796467ffa4bcbd)
 at upstream commit `576fe4a` (MIT, Copyright (c) 2026 IndyDevDan). Local changes: fixed-baseline
 token defaults, per-field clamping, the default prompt files moved to
 `extensions/self-compact/prompts/`, the entry renamed to `index.ts`, the footer bar gated
-behind `--compact-footer`, and the A/B experiment with its per-session mode selector
-(`variants.ts`, `state.ts`, `/self-compact-mode`). The upstream sample app,
+behind `--compact-footer`, the tool-call triggers and derived lock (`guidance.ts`, `index.ts`),
+and the append-only guidance messages. The upstream sample app,
 verification scripts, and e2e tests are not vendored; that detail and the full change list live in
 [`extensions/self-compact/UPSTREAM.md`](extensions/self-compact/UPSTREAM.md). Tests run with
 `npm run test:self-compact`.
