@@ -47,7 +47,7 @@ export interface EntryLike {
 	customType?: string;
 	data?: unknown;
 	details?: unknown;
-	message?: { role?: string; usage?: unknown; stopReason?: string };
+	message?: { role?: string; usage?: unknown; stopReason?: string; content?: unknown };
 }
 
 export interface RecoveredState {
@@ -89,6 +89,37 @@ export function recoverState(entries: EntryLike[]): RecoveredState {
 	const compactionLanded = entries.some((e) => e.type === "compaction" && (e.details as { handoffId?: string } | undefined)?.handoffId === h.id);
 	if (compactionLanded || h.status === "ready") state.handoff = { ...h, status: "ready" };
 	return result;
+}
+
+/** The extension's own meta tools are not ordinary work and never count toward the trigger. */
+const NON_COUNTED_TOOLS = new Set(["self_compact", "view_context"]);
+
+/**
+ * Ordinary tool calls on the active branch after the LAST compaction entry. Rebuilt from the branch
+ * on resume/reload/tree instead of a persisted counter: a real compaction resets it to zero, a reload
+ * does not. Entries before the last compaction are retained history and must not be counted again.
+ */
+export function countToolCallsSinceCompaction(entries: EntryLike[]): number {
+	let start = 0;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		if (entries[i]!.type === "compaction") {
+			start = i + 1;
+			break;
+		}
+	}
+	let count = 0;
+	for (let i = start; i < entries.length; i++) {
+		const entry = entries[i]!;
+		if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
+		const content = entry.message.content;
+		if (!Array.isArray(content)) continue;
+		for (const part of content) {
+			if (!part || typeof part !== "object" || (part as { type?: string }).type !== "toolCall") continue;
+			const name = (part as { name?: string }).name;
+			if (name && !NON_COUNTED_TOOLS.has(name)) count += 1;
+		}
+	}
+	return count;
 }
 
 export interface UsageLike {

@@ -18,7 +18,9 @@
  *   which is what keeps the provider's prefix cache intact (see cache-prefix.test.ts).
  * - At the forced threshold, and while a note is waiting to be compacted, every tool except
  *   `self_compact` and `view_context` is blocked in `tool_call` with an explicit reason. The lock is
- *   derived from that state, not stored.
+ *   derived from that state, not stored. When `self_compact` is not an active tool (`--exclude-tools`,
+ *   `pi.setActiveTools`), the extension adds no guidance and no lock, and Pi's native automatic
+ *   compaction is left alone.
  * - This extension cancels Pi's automatic compaction (overflow recovery included) and replaces it
  *   with the note handoff. Failure or cancellation keeps the note; retries, /self-compact-now,
  *   reload and /tree recovery all resume from the saved note.
@@ -49,7 +51,7 @@ import {
 	VIEW_TOOL_NAME,
 } from "./guidance.ts";
 import { BUILTIN_PROMPTS, FORCED_PROMPT, loadPromptFile, NOTE_MAX_CHARS, promptSearchDirs, renderTemplate, resolveCompactionPrompt, type TemplateValues } from "./prompts.ts";
-import { emptyState, GUIDANCE_TYPE, HANDOFF_TYPE, INFO_ENTRY_TYPE, latestAssistantUsage, recoverState, STATE_TYPE, type EntryLike, type Handoff, type PersistedState } from "./state.ts";
+import { countToolCallsSinceCompaction, emptyState, GUIDANCE_TYPE, HANDOFF_TYPE, INFO_ENTRY_TYPE, latestAssistantUsage, recoverState, STATE_TYPE, type EntryLike, type Handoff, type PersistedState } from "./state.ts";
 import { generateSummary, hasCompactionMaterial, keepRecentTokens } from "./summary.ts";
 import { DEFAULT_SPECS, LEVEL_ORDER, levelFor, resolveThresholds, SPEC_HELP, validateSpecs, type ResolvedThresholds, type SpecSource, type ThresholdSpecs, type UsageLevel } from "./thresholds.ts";
 
@@ -192,7 +194,7 @@ export default function selfCompact(pi: ExtensionAPI) {
 		return h && h.status !== "done" ? h : undefined;
 	};
 	/** Derived: tools are blocked while a note waits for compaction, or past the forced line when there is something to compact. */
-	const locked = (ctx: ExtensionContext): boolean => activeHandoff() !== undefined || (R.level === "forced" && compactable(ctx));
+	const locked = (ctx: ExtensionContext): boolean => selfToolActive() && (activeHandoff() !== undefined || (R.level === "forced" && compactable(ctx)));
 
 	/** False when Pi would answer "Nothing to compact": the session still fits inside keepRecentTokens. */
 	function compactable(ctx: ExtensionContext): boolean {
@@ -202,6 +204,20 @@ export default function selfCompact(pi: ExtensionAPI) {
 	function viewToolActive(): boolean {
 		try {
 			return pi.getActiveTools().includes(VIEW_TOOL_NAME);
+		} catch {
+			return true;
+		}
+	}
+
+	/**
+	 * Whether the self_compact tool is actually callable in this session. `--exclude-tools` and
+	 * `pi.setActiveTools` keep it out of `getActiveTools()`, and then the whole mechanism (guidance,
+	 * locking, automatic-compaction interception) must stay out of the way and native Pi compaction
+	 * must keep working.
+	 */
+	function selfToolActive(): boolean {
+		try {
+			return pi.getActiveTools().includes(TOOL_NAME);
 		} catch {
 			return true;
 		}
@@ -341,12 +357,13 @@ export default function selfCompact(pi: ExtensionAPI) {
 
 	/** True when a trigger may speak: settings valid, no note waiting, and Pi would have something to compact. */
 	function mayTrigger(ctx: ExtensionContext): boolean {
-		return !inert() && R.thresholds !== undefined && !activeHandoff() && compactable(ctx);
+		return selfToolActive() && !inert() && R.thresholds !== undefined && !activeHandoff() && compactable(ctx);
 	}
 
 	/** Evaluate the passive triggers (threshold crossing, tool-call checkpoint). Called whenever usage may have changed. */
 	function tick(ctx: ExtensionContext) {
 		refresh(ctx);
+		if (!selfToolActive()) return;
 		const level = R.level;
 		const crossed = THRESHOLD_KEYS.includes(level) && !THRESHOLD_KEYS.some((k) => LEVEL_ORDER[k] >= LEVEL_ORDER[level] && R.fired.has(k as TriggerKey));
 		const checkpoint = R.toolCalls.sinceCompaction >= TOOL_CALL_TRIGGER && !R.fired.has("checkpoint");
@@ -377,14 +394,14 @@ export default function selfCompact(pi: ExtensionAPI) {
 
 	function deliverHandoff(ctx: ExtensionContext) {
 		const h = handoff();
-		if (!R.alive || !h || h.status !== "ready" || !ctx.isIdle()) return;
+		if (!R.alive || !selfToolActive() || !h || h.status !== "ready" || !ctx.isIdle()) return;
 		// Content is exactly the saved note (verbatim contract); the header lives in the renderer and details.
 		pi.sendMessage({ customType: HANDOFF_TYPE, content: h.note, display: true, details: { id: h.id, cycle: R.state.cycle, note: h.note } }, { triggerTurn: true });
 	}
 
 	function startCompaction(ctx: ExtensionContext, trigger: string) {
 		const h = handoff();
-		if (R.compactionInFlight || !h || (h.status !== "pending" && h.status !== "failed")) return;
+		if (!selfToolActive() || R.compactionInFlight || !h || (h.status !== "pending" && h.status !== "failed")) return;
 		R.compactionInFlight = true;
 		h.status = "compacting";
 		save();
@@ -397,6 +414,7 @@ export default function selfCompact(pi: ExtensionAPI) {
 	}
 
 	function scheduleRetry(ctx: ExtensionContext) {
+		if (!selfToolActive()) return;
 		const delay = 2_000 * Math.max(1, handoff()?.attempts ?? 1);
 		deferInEpoch("retryTimer", delay, () => {
 			if (handoff()?.status === "failed" && ctx.isIdle()) startCompaction(ctx, `auto-retry ${(handoff()?.attempts ?? 0) + 1}`);
@@ -582,6 +600,10 @@ export default function selfCompact(pi: ExtensionAPI) {
 				notify(ctx, `self-compact: cannot compact, settings were rejected: ${problem}`, "error");
 				return;
 			}
+			if (!selfToolActive()) {
+				notify(ctx, `self-compact: cannot compact, ${TOOL_NAME} is not an active tool in this session (--exclude-tools or pi.setActiveTools). Enable it, or use Pi's own /compact.`, "error");
+				return;
+			}
 			const h = handoff();
 			if (h && (h.status === "compacting" || h.status === "ready")) {
 				notify(ctx, "self-compact: compaction is already in progress.", "info");
@@ -667,14 +689,20 @@ export default function selfCompact(pi: ExtensionAPI) {
 		const branch = ctx.sessionManager.getBranch() as never[];
 		const recovered = recoverState(branch);
 		R.state = recovered.state;
+		// The tool-call trigger is derived from the active branch, so a reload, resume or /tree
+		// keeps the count and only a real compaction resets it.
+		R.toolCalls.sinceCompaction = countToolCallsSinceCompaction(branch as unknown as EntryLike[]);
 		// Never repeat a message the model already has in its context.
 		restoreFired(ctx);
 
 		const problem = inert();
-		if (problem) notify(ctx, `self-compact REJECTED settings: ${problem}. Every tool is blocked until the flags are fixed.`, "error");
+		if (problem && selfToolActive()) notify(ctx, `self-compact REJECTED settings: ${problem}. Every tool is blocked until the flags are fixed.`, "error");
 
 		const h = handoff();
-		if (h && recovered.journaledUnanswered) {
+		if (h && !selfToolActive()) {
+			// The tool is excluded: keep any saved note exactly as it is. Do not lock ordinary tools,
+			// deliver the note, or start compaction for a mechanism the model cannot drive.
+		} else if (h && recovered.journaledUnanswered) {
 			// Crash between journaling the handoff and the model's answer: resume without a user prompt.
 			R.state.handoff = { ...h, status: "done" };
 			save();
@@ -725,6 +753,7 @@ export default function selfCompact(pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event) => {
 		R.toolCalls.thisRun = 0;
+		if (!selfToolActive()) return undefined;
 		return { systemPrompt: event.systemPrompt + systemPromptLine(viewToolActive()) };
 	});
 
@@ -755,20 +784,25 @@ export default function selfCompact(pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
 		refresh(ctx); // the lock below reads the level; make sure it is current
 		const problem = inert();
-		if (problem) return { block: true, reason: `self-compact rejected its settings, so this session is not protected: ${problem}. Fix the --compact-* flags and restart.` };
+		if (problem) {
+			if (!selfToolActive()) return undefined;
+			return { block: true, reason: `self-compact rejected its settings, so this session is not protected: ${problem}. Fix the --compact-* flags and restart.` };
+		}
 		if (event.toolName === TOOL_NAME || event.toolName === VIEW_TOOL_NAME) return undefined;
 		// Whole-batch preflight: Pi preflights siblings sequentially before running them concurrently,
 		// so an ordinary tool before or after a self_compact call in the same assistant message is blocked too.
 		const branch = ctx.sessionManager.getBranch();
-		for (let i = branch.length - 1; i >= 0; i--) {
-			const entry = branch[i]!;
-			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-			const calls = (entry.message as AssistantMessage).content.filter((c) => c.type === "toolCall");
-			const hasHandoff = calls.some((c) => c.type === "toolCall" && c.name === TOOL_NAME && typeof c.arguments?.note_to_self === "string" && c.arguments.note_to_self.trim().length > 0 && c.arguments.note_to_self.length <= NOTE_MAX_CHARS);
-			if (hasHandoff && calls.some((c) => c.type === "toolCall" && c.id === event.toolCallId)) {
-				return { block: true, terminate: true, reason: `Tool "${event.toolName}" is blocked by self-compact: ${TOOL_NAME} is in this tool batch, so the run must end here. Wait for the handoff.` };
+		if (selfToolActive()) {
+			for (let i = branch.length - 1; i >= 0; i--) {
+				const entry = branch[i]!;
+				if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+				const calls = (entry.message as AssistantMessage).content.filter((c) => c.type === "toolCall");
+				const hasHandoff = calls.some((c) => c.type === "toolCall" && c.name === TOOL_NAME && typeof c.arguments?.note_to_self === "string" && c.arguments.note_to_self.trim().length > 0 && c.arguments.note_to_self.length <= NOTE_MAX_CHARS);
+				if (hasHandoff && calls.some((c) => c.type === "toolCall" && c.id === event.toolCallId)) {
+					return { block: true, terminate: true, reason: `Tool "${event.toolName}" is blocked by self-compact: ${TOOL_NAME} is in this tool batch, so the run must end here. Wait for the handoff.` };
+				}
+				break;
 			}
-			break;
 		}
 		if (locked(ctx)) {
 			const h = activeHandoff();
@@ -789,12 +823,13 @@ export default function selfCompact(pi: ExtensionAPI) {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		tick(ctx);
-		if (!mayTrigger(ctx)) return;
-		// Past the warning line (or locked) an idle agent is asked to compact now; otherwise a heavy run gets the RUN ENDED nudge.
-		if (locked(ctx) || LEVEL_ORDER[R.level] >= LEVEL_ORDER.warning) {
-			fire(ctx, "now", nowPrompt(), true);
-		} else if (R.toolCalls.thisRun >= TOOL_CALL_TRIGGER) {
-			fire(ctx, "run-end", renderTemplate(RUN_END_PROMPT, templateValues()), true);
+		if (mayTrigger(ctx)) {
+			// Past the warning line (or locked) an idle agent is asked to compact now; otherwise a heavy run gets the RUN ENDED nudge.
+			if (locked(ctx) || LEVEL_ORDER[R.level] >= LEVEL_ORDER.warning) {
+				fire(ctx, "now", nowPrompt(), true);
+			} else if (R.toolCalls.thisRun >= TOOL_CALL_TRIGGER) {
+				fire(ctx, "run-end", renderTemplate(RUN_END_PROMPT, templateValues()), true);
+			}
 		}
 		// A follow-up turn continues the same run (no before_agent_start), so the per-run count is consumed here.
 		R.toolCalls.thisRun = 0;
@@ -803,7 +838,7 @@ export default function selfCompact(pi: ExtensionAPI) {
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!R.alive) return; // shutdown during compaction: the ctx is already stale
 		refresh(ctx);
-		if (inert()) return;
+		if (inert() || !selfToolActive()) return;
 		const h = handoff();
 		if (!h || !ctx.isIdle()) return;
 		if (h.status === "ready") deliverHandoff(ctx);
@@ -813,6 +848,8 @@ export default function selfCompact(pi: ExtensionAPI) {
 	pi.on("session_before_compact", async (event, ctx) => {
 		// Native threshold/overflow compaction is replaced by the note handoff: the forced level does the asking.
 		if (event.reason !== "manual") {
+			// With self_compact excluded there is no note handoff to replace it, so native stays on.
+			if (!selfToolActive()) return undefined;
 			refresh(ctx);
 			return { cancel: true };
 		}
@@ -858,6 +895,10 @@ export default function selfCompact(pi: ExtensionAPI) {
 		// Guidance still inside the kept window must not be repeated; guidance summarized away may fire again.
 		restoreFired(ctx);
 		R.compactionInFlight = false;
+		if (!selfToolActive()) {
+			refresh(ctx);
+			return;
+		}
 		const h = handoff();
 		if (h && h.status !== "done") {
 			R.state.cycle += 1;
@@ -874,6 +915,7 @@ export default function selfCompact(pi: ExtensionAPI) {
 		if (event.reason !== "manual" && event.aborted) return;
 		R.compactionInFlight = false;
 		if (!R.alive) return; // shutdown aborted the compaction: the saved note is recovered on the next session start
+		if (!selfToolActive()) return;
 		const h = handoff();
 		if (!h || (h.status !== "compacting" && h.status !== "pending")) {
 			refresh(ctx);

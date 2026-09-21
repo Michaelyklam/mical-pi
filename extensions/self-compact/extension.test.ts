@@ -78,6 +78,8 @@ async function host(
 		window?: number;
 		/** Resume: reuse the entries of another host so this instance recovers its branch. */
 		entries?: any[];
+		/** Model `--exclude-tools` / `pi.setActiveTools`: the tool names the session can actually call. */
+		activeTools?: string[];
 	} = {},
 ) {
 	const { flags = {}, settings = { compaction: { keepRecentTokens: 100 } }, window = 200_000 } = options;
@@ -104,8 +106,10 @@ async function host(
 		messages.push({ ...message, options: messageOptions });
 		entries.push({ type: "custom_message", id: `m${messages.length}`, parentId: entries.at(-1)?.id ?? null, timestamp: new Date().toISOString(), customType: message.customType, content: message.content, display: message.display, details: message.details });
 	};
-	loaded.runtime.getActiveTools = () => [...extension.tools.keys()];
-
+	loaded.runtime.getActiveTools = () => activeTools;
+	loaded.runtime.sendUserMessage = (text: string, sendOptions?: any) => userMessages.push({ text, options: sendOptions });
+	const activeTools: string[] = [...(options.activeTools ?? extension.tools.keys())];
+	const userMessages: any[] = [];
 	const ctx: any = {
 		cwd,
 		mode: "tui",
@@ -159,6 +163,9 @@ async function host(
 		infoData: (): any => entries.filter((entry: any) => entry.customType === "self-compact-info").at(-1)?.data,
 		execute: (note = "NEXT ACTION: continue") =>
 			extension.tools.get("self_compact").definition.execute("call", { note_to_self: note }, undefined, undefined, ctx),
+		activeTools,
+		userMessages,
+		setActiveTools: (names: string[]) => { activeTools.length = 0; activeTools.push(...names); },
 		definition: (name = "self_compact") => extension.tools.get(name).definition,
 		/** Every model-facing trigger message sent so far (threshold guidance and nudges share one customType). */
 		sent: () => messages.filter((m: any) => m.customType === "self-compact-guidance"),
@@ -390,4 +397,94 @@ test("a saved note derives the lock and silences every trigger until the handoff
 	h.usage(250_000);
 	await h.emit("agent_end");
 	assert.equal(h.sent().length, 0, "no guidance or nudge while a note is waiting");
+});
+
+// ----------------------------------------------------- excluded / inactive tool
+
+// Regression for the review finding that `--exclude-tools self_compact` still forced-locked
+// ordinary tools and cancelled native threshold/overflow compaction.
+test("excluding self_compact leaves ordinary tools unlocked and native automatic compaction intact", async (t) => {
+	const h = await host(t, { window: 1_000_000, activeTools: ["read", "view_context"] });
+	h.usage(500_000); // far past the forced line
+
+	assert.equal(await h.emit("tool_call", { toolName: "read", toolCallId: "x" }), undefined, "no forced lock while self_compact is inactive");
+	assert.deepEqual(await h.emit("session_before_compact", { reason: "threshold" }), undefined, "native threshold compaction is not cancelled");
+	assert.deepEqual(await h.emit("session_before_compact", { reason: "overflow" }), undefined, "native overflow compaction is not cancelled");
+
+	assert.equal(await h.emit("before_agent_start", { systemPrompt: "BASE" }), undefined, "no guidance is appended to the system prompt");
+	assert.equal((await h.view()).details.tools_locked, false, "view_context still reports the derived lock as released");
+
+	for (let i = 0; i < 12; i++) await h.emit("tool_call", { toolName: "read", toolCallId: `c${i}` });
+	await h.emit("agent_end");
+	assert.equal(h.sent().length, 0, "no checkpoint or threshold messages while self_compact is inactive");
+});
+
+test("/self-compact-now refuses clearly when self_compact is excluded", async (t) => {
+	const h = await host(t, { activeTools: ["read", "view_context"] });
+	await h.extension.commands.get("self-compact-now").handler("", h.ctx);
+	assert.equal(h.userMessages.length, 0, "no request is queued for a tool that cannot be called");
+	assert.ok(h.notices.some((notice: any) => notice.type === "error" && /self_compact is not an active tool/.test(notice.message)), "the refusal names the inactive tool");
+});
+
+test("a pending note recovered while self_compact is excluded is kept but never locked, delivered, or compacted", async (t) => {
+	const entries = seedEntries();
+	entries.push({ type: "custom", customType: "self-compact-state", data: { version: 1, cycle: 2, handoff: { id: "h1", note: "NEXT ACTION: finish", status: "pending", attempts: 0, savedAt: 1 } } });
+	const h = await host(t, { window: 1_000_000, entries, activeTools: ["read", "view_context"] });
+
+	assert.equal((await h.view()).details.tools_locked, false);
+	assert.equal(await h.emit("tool_call", { toolName: "read", toolCallId: "x" }), undefined, "the pending note does not lock the session");
+	await h.emit("agent_settled");
+	assert.equal(h.compactions.length, 0, "compaction is not started while the tool is inactive");
+	assert.equal(h.messages.filter((m: any) => m.customType === "self-compact-handoff").length, 0, "the saved note is not delivered");
+	const state = h.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data;
+	assert.equal(state.handoff.status, "pending", "the note is preserved for when the tool is enabled again");
+	assert.equal(state.handoff.note, "NEXT ACTION: finish");
+});
+
+// ------------------------------------------------------------------ counting
+
+test("ordinary tool calls are reconstructed on reload so the checkpoint still fires", async (t) => {
+	const h = await host(t, { window: 1_000_000 });
+	h.usage(50_000);
+	await h.emit("before_agent_start", { systemPrompt: "BASE" });
+	for (let i = 0; i < 9; i++) {
+		await h.emit("tool_call", { toolName: "read", toolCallId: `r${i}` });
+		h.entries.push({ type: "message", id: `a${i}`, parentId: null, message: { role: "assistant", content: [{ type: "toolCall", id: `r${i}`, name: "read", arguments: { path: "README.md" } }] } });
+	}
+	assert.equal((await h.view()).details.tool_calls_since_compaction, 9);
+
+	await h.emit("session_start", { reason: "reload" });
+	assert.equal((await h.view()).details.tool_calls_since_compaction, 9, "a reload reconstructs the count from the branch instead of resetting it");
+	assert.equal((await h.view()).details.tool_calls_this_run, 0, "the restored session has no active run, so thisRun restarts at zero");
+	assert.equal(h.sent().length, 0, "nine reconstructed calls are still short of the trigger");
+
+	await h.emit("tool_call", { toolName: "read", toolCallId: "r9" });
+	assert.equal(h.sent().length, 1, "the tenth call after the reload sends CHECKPOINT");
+	assert.match(h.sent()[0].content, /^\[self-compact · CHECKPOINT\] 10 tool calls/);
+});
+
+test("only tool calls after the last compaction are counted, and self_compact/view_context are excluded", async (t) => {
+	const entries = seedEntries();
+	const assistantCall = (id: string, name: string) => ({ type: "message", id: `${id}-entry`, parentId: null, message: { role: "assistant", content: [{ type: "toolCall", id, name, arguments: {} }] } });
+	entries.push(assistantCall("old", "read"), assistantCall("old2", "bash")); // retained pre-compaction history
+	entries.push({ type: "compaction", id: "k1", parentId: null, timestamp: new Date().toISOString(), summary: "summary", firstKeptEntryId: null, tokensBefore: 10, details: {} });
+	entries.push(assistantCall("n1", "read"), assistantCall("n2", "bash"), assistantCall("n3", "edit"));
+	entries.push(assistantCall("sc", "self_compact"), assistantCall("vc", "view_context"));
+
+	const h = await host(t, { window: 1_000_000, entries });
+	assert.equal((await h.view()).details.tool_calls_since_compaction, 3, "pre-compaction history and the meta tools are not counted");
+});
+
+test("session_tree recounts the ordinary tool calls on the newly active branch", async (t) => {
+	const h = await host(t, { window: 1_000_000 });
+	h.usage(50_000);
+	const branch = (count: number, prefix: string) => Array.from({ length: count }, (_, i) => ({ type: "message", id: `${prefix}${i}`, parentId: null, message: { role: "assistant", content: [{ type: "toolCall", id: `${prefix}${i}`, name: "read", arguments: {} }] } }));
+
+	h.entries.splice(0, h.entries.length, ...seedEntries(), ...branch(2, "two-"));
+	await h.emit("session_tree", {});
+	assert.equal((await h.view()).details.tool_calls_since_compaction, 2);
+
+	h.entries.splice(0, h.entries.length, ...seedEntries(), ...branch(5, "five-"));
+	await h.emit("session_tree", {});
+	assert.equal((await h.view()).details.tool_calls_since_compaction, 5, "the count follows the branch that is now active");
 });
