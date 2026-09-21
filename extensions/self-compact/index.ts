@@ -5,6 +5,11 @@
  *   pi -e extensions/self-compact/index.ts \
  *      [--compact-soft-at 100000] [--compact-at 200000] [--compact-buffer 100000] [--compact-prompt "..."]
  *
+ * - Mode: /self-compact-mode picks Control, Experimental, or Off with a picker (no model turn), and
+ *   /self-compact-mode control|experimental|off does the same noninteractively. The choice is saved in the
+ *   session as a self-compact-mode entry, so it survives reload and resume, follows /tree, and stays per
+ *   session: two Pi sessions can run different arms side by side. New sessions default to Control, and
+ *   --compact-experimental bootstraps a session to Experimental.
  * - Three thresholds (notice / warning / forced) capped at 90% of the active model window.
  *   This extension cancels Pi's automatic compaction, overflow recovery included, and replaces it
  *   with the note handoff below. The 90% cap is headroom for the note and the summarizer call, not
@@ -20,11 +25,14 @@
  *   replacement summary prompt (--compact-prompt > USER_PROMPT_COMPACTION_MESSAGE.md > built-in), and the note is
  *   returned verbatim as a handoff message (shown in full) that starts the next turn. When Pi would find nothing to
  *   compact (the session fits inside keepRecentTokens) the tool refuses instead of saving a note and locking.
- * - A/B test: `self_compact` is the control (variant A) and `self_compact_experimental` is variant B, registered
- *   only with `--compact-experimental`. Both share this one engine, hook set, and persisted state and differ only in
- *   the prompt the agent sees (see variants.ts). Pi's `--tools` / `--exclude-tools` select the active variants; every
- *   extension-generated message names the enabled one (control wins when both are live). With neither enabled the
- *   extension is passive: no guidance, no lock, and Pi's automatic compaction is left alone.
+ * - A/B test: /self-compact-mode selects exactly one variant. Control is `self_compact` (variant A);
+ *   Experimental is `self_compact_experimental` (variant B). Both are registered at load (registration is not
+ *   exposure) and share this one engine, hook set, and persisted state, differing only in the prompt the agent
+ *   sees (see variants.ts). Only the selected variant is active, so only its description, snippet, guidelines,
+ *   and guidance reach the model. Off removes both, restores Pi's automatic compaction, and stops the lock and
+ *   reminders. A user switch is transactional: when Pi's --tools/--exclude-tools filters deny the target, the
+ *   previous tool set is restored, the refusal is reported, and nothing is persisted. Startup recovery instead
+ *   leaves the session passive when the saved mode is unreachable.
  * - Failure or cancellation keeps the note and the lock; retries, /self-compact-now, reload and /tree recovery.
  * - One-line replacement footer: model id on the left, the 20-cell context bar and phase on the right.
  *
@@ -37,7 +45,7 @@
  *     (see thresholds.ts).
  *   - Default prompt files are vendored under extensions/self-compact/prompts/ (see prompts.ts).
  *   - The footer bar is opt-in (--compact-footer) so extensions/usage-footer keeps the footer.
- *   - Opt-in experimental variant B (--compact-experimental, see variants.ts).
+ *   - Per-session mode switching between the control and experimental variants (/self-compact-mode, variants.ts).
  * The upstream build was merged from the claude-fable-5-1 and gpt-6-astra implementations
  * (upstream path specs/self-compact-merge.html).
  */
@@ -61,16 +69,24 @@ import {
 	type TemplateValues,
 } from "./prompts.ts";
 import {
+	bootstrapMode,
+	COMPACT_MODES,
+	COMPACT_TOOL_NAMES,
 	CONTROL_TOOL_NAME,
 	EXPERIMENTAL_FLAG,
 	EXPERIMENTAL_TOOL_NAME,
 	experimentalGuidance,
 	hasEnabledVariant,
 	isCompactToolName,
+	MODE_CHOICES,
+	modeSummary,
+	modeToolName,
+	parseMode,
 	primaryToolName,
 	selectVariants,
 	variantDefinition,
 	VIEW_TOOL_NAME,
+	type CompactMode,
 	type CompactVariant,
 	type GuidanceLevel,
 	type VariantState,
@@ -78,12 +94,15 @@ import {
 import {
 	HANDOFF_TYPE,
 	INFO_ENTRY_TYPE,
+	MODE_ENTRY_TYPE,
 	PHASE_ENTRY_TYPE,
 	STATE_TYPE,
 	emptyState,
 	latestAssistantUsage,
+	recoverMode,
 	recoverState,
 	type Handoff,
+	type ModeEntry,
 	type PersistedState,
 } from "./state.ts";
 import {
@@ -155,10 +174,14 @@ interface Runtime {
 	promptErrors: Set<string>;
 	/** Self-compaction variants Pi currently has active (--tools / --exclude-tools own this). */
 	variants: VariantState;
+	/** Selected mode for this session: control, experimental, or off. Persisted as a mode entry. */
+	mode: CompactMode;
+	/** Where the current mode came from (picker/argument, CLI bootstrap, or the persisted entry). */
+	modeSource: ModeEntry["source"];
+	/** Set when the selected mode could not be activated (Pi's filters deny its tool). */
+	modeBlocked?: string;
 	/** Cached system-prompt suffix for the current variant; re-rendered only when the tool name changes. */
 	systemPromptCache?: { tool: string; viewActive: boolean; text: string };
-	/** The experimental tool is registered at most once per loaded extension. */
-	registeredExperimental: boolean;
 }
 
 /** Prompt used by /self-compact-now and the idle nudge; `tool` is the enabled variant. */
@@ -219,12 +242,21 @@ export default function selfCompact(pi: ExtensionAPI) {
 		idleRequestEpoch: -1,
 		promptErrors: new Set(),
 		variants: { control: true, experimental: false },
-		registeredExperimental: false,
+		mode: "control",
+		modeSource: "flag",
 	};
 
 	const flag = (name: string): string | undefined => {
 		const value = pi.getFlag(name);
 		return typeof value === "string" && value.trim() !== "" ? value : undefined;
+	};
+
+	const flagOn = (name: string): boolean => {
+		try {
+			return pi.getFlag(name) === true;
+		} catch {
+			return false;
+		}
 	};
 
 	/** CLI flag values are applied after extensions load, so settings are read at session start. */
@@ -285,18 +317,139 @@ export default function selfCompact(pi: ExtensionAPI) {
 		}
 	}
 
-	/** Register the experimental tool once, and only when --compact-experimental is set. */
-	function ensureExperimentalRegistered() {
-		if (R.registeredExperimental) return;
-		let experimentalOn = false;
+	/** Tools Pi currently reports as active, or undefined before Pi binds its runtime. */
+	function readActiveTools(): string[] | undefined {
 		try {
-			experimentalOn = pi.getFlag(EXPERIMENTAL_FLAG) === true;
+			return pi.getActiveTools();
 		} catch {
-			experimentalOn = false;
+			return undefined;
 		}
-		if (!experimentalOn) return;
-		registerCompactTool(variantDefinition("experimental"));
-		R.registeredExperimental = true;
+	}
+
+	interface ModeOutcome {
+		ok: boolean;
+		/** The mode the extension is left in: the new one on success, the previous one on a refused switch. */
+		mode: CompactMode;
+		/** Set when the target variant could not be activated. */
+		blockedTool?: string;
+		reason: string;
+	}
+
+	/**
+	 * Make `mode` the only active self-compaction variant and leave every unrelated tool
+	 * active. Pi owns the hard filters: `setActiveTools` only accepts registered tools that
+	 * `--tools` and `--exclude-tools` allow, so a denied variant never comes up.
+	 *
+	 * `rollback` decides what the active set becomes when the target does not come up:
+	 * - "restore": put back exactly the set read before the attempt. A user switch is then
+	 *   transactional, so a refused switch leaves the session running the mode it was running,
+	 *   with every unrelated tool still active and nothing persisted.
+	 * - "passive": trim both variants instead. Startup recovery needs this, because Pi activates
+	 *   every registered extension tool while it builds the runtime, so the set read before the
+	 *   attempt can already contain a variant this session never selected.
+	 */
+	function applyMode(mode: CompactMode, source: ModeEntry["source"], rollback: "restore" | "passive"): ModeOutcome {
+		// Never strand a saved note: switching to `off` would drop the note waiting to be compacted.
+		const pending = activeHandoff();
+		if (mode === "off" && pending) return { ok: false, mode: R.mode, reason: `a note is saved and compaction is ${pending.status}` };
+		const tool = modeToolName(mode);
+		const before = readActiveTools();
+		if (!before) return { ok: false, mode: R.mode, reason: "Pi has not bound its runtime yet" };
+		const desired = before.filter((name) => !COMPACT_TOOL_NAMES.includes(name));
+		if (tool) desired.push(tool);
+		const unchanged = desired.length === before.length && desired.every((name) => before.includes(name));
+		if (!unchanged) {
+			try {
+				pi.setActiveTools(desired);
+			} catch (error) {
+				return { ok: false, mode: R.mode, reason: error instanceof Error ? error.message : String(error) };
+			}
+		}
+		resolveVariants();
+		const active = mode === "off" ? !enabled() : tool !== undefined && isCompactToolName(tool, R.variants);
+		if (!active) {
+			// Pi filters the requested set, so the failed target is already gone. Restore the previous
+			// set for a user switch; for startup recovery trim both variants, since the runtime build
+			// may have activated a variant this session never selected.
+			if (!unchanged) {
+				pi.setActiveTools(rollback === "restore" ? before : before.filter((name) => !COMPACT_TOOL_NAMES.includes(name)));
+			}
+			resolveVariants();
+			return { ok: false, mode: R.mode, blockedTool: tool, reason: tool ? `${tool} did not become active` : "no self-compaction tool is available" };
+		}
+		commitMode(mode, source);
+		return { ok: true, mode, reason: "" };
+	}
+
+	/**
+	 * Store the selection. The entry is the durable per-session choice: a user switch and a
+	 * non-default flag bootstrap persist one, while the plain default and every recovery read stay
+	 * silent, so a reload or a tree move never duplicates the entry.
+	 */
+	function commitMode(mode: CompactMode, source: ModeEntry["source"]) {
+		const changed = R.mode !== mode;
+		const previousLock = R.state.locked;
+		R.mode = mode;
+		R.modeSource = source;
+		R.modeBlocked = undefined;
+		R.announcedLevel = "idle";
+		R.systemPromptCache = undefined;
+		clearTimers();
+		if (mode === "off") setLocked(false);
+		if (source === "user" || (source === "flag" && mode !== "control")) {
+			const entry: ModeEntry = { version: 1, mode, source, at: Date.now() };
+			pi.appendEntry(MODE_ENTRY_TYPE, entry);
+		}
+		if (changed || previousLock !== R.state.locked) save();
+	}
+
+	/** One error message for a mode that could not be activated; a pending note changes the wording. */
+	function reportModeFailure(ctx: ExtensionContext, requested: CompactMode, outcome: ModeOutcome) {
+		const strandedNote = activeHandoff();
+		const denied = outcome.blockedTool ? `; Pi's --tools/--exclude-tools filters deny ${outcome.blockedTool} in this session` : "";
+		R.modeBlocked = `${outcome.reason}${denied}`;
+		notify(
+			ctx,
+			strandedNote
+				? `self-compact: the saved note (${strandedNote.note.length} chars) cannot be compacted (${outcome.reason}${denied}). The note is kept and no tool is locked; restart without that filter, or with --${EXPERIMENTAL_FLAG}, to compact it.`
+				: `self-compact: the ${requested} mode cannot be activated (${outcome.reason}${denied}). The extension stays passive: native compaction keeps working and no tool is locked. /self-compact-mode picks another mode.`,
+			"error",
+		);
+	}
+
+	/** Always-visible feedback for a command the user typed (the be-quiet-in-TUI rule does not apply). */
+	function feedback(ctx: ExtensionContext, message: string, type: "info" | "warning" | "error" = "info") {
+		if (ctx.hasUI) ctx.ui.notify(message, type);
+		else if (type !== "info") process.stderr.write(`[self-compact] ${message}\n`);
+	}
+
+	/** /self-compact-mode: refuse mid-handoff, apply, then report exactly what happened. */
+	function switchMode(ctx: ExtensionContext, mode: CompactMode) {
+		const pending = activeHandoff();
+		if (pending) {
+			feedback(
+				ctx,
+				`self-compact: cannot switch to ${mode} while a note is saved and compaction is ${pending.status}. The note is kept; wait for the handoff, or run /self-compact-now to retry. Nothing changed.`,
+				"warning",
+			);
+			return;
+		}
+		const outcome = applyMode(mode, "user", "restore");
+		if (!outcome.ok) {
+			const denied = outcome.blockedTool ? `; Pi's --tools/--exclude-tools filters deny ${outcome.blockedTool} in this session` : "";
+			// A user switch is transactional, so applyMode restored the previous tool set. Report the
+			// state the session is really in instead of naming a mode that is no longer running.
+			feedback(
+				ctx,
+				enabled()
+					? `self-compact: cannot activate ${mode} (${outcome.reason}${denied}). Nothing changed: the session still runs ${outcome.mode} (${modeSummary(outcome.mode)}).`
+					: `self-compact: cannot activate ${mode} (${outcome.reason}${denied}). Nothing changed: the extension stays passive, native compaction keeps working, and no tool is locked.`,
+				"error",
+			);
+			return;
+		}
+		trackLevel(ctx);
+		feedback(ctx, `self-compact: mode ${mode}, ${modeSummary(mode)}. Saved for this session only; other Pi sessions keep their own mode.`, "info");
 	}
 
 	// ---------------------------------------------------------------- helpers
@@ -397,7 +550,7 @@ export default function selfCompact(pi: ExtensionAPI) {
 	/** Footer tag: REJECTED > PASSIVE (no variant enabled) > handoff in flight > phase. */
 	function statusTag(): string {
 		if (inert()) return "REJECTED";
-		if (!enabled()) return "PASSIVE";
+		if (!enabled()) return R.mode === "off" ? "OFF" : "PASSIVE";
 		const h = handoff();
 		if (h && h.status !== "done") return handoffTag(h.status);
 		return levelTag(R.level);
@@ -526,7 +679,9 @@ export default function selfCompact(pi: ExtensionAPI) {
 		const fmt = (n: number) => n.toLocaleString("en-US");
 		const problem = inert();
 		const lines: string[] = ["self-compact info"];
-		lines.push(`settings: --compact-soft-at ${R.specs.softAt} (${R.sources.softAt}), --compact-at ${R.specs.at} (${R.sources.at}), --compact-buffer ${R.specs.buffer} (${R.sources.buffer}), --compact-prompt ${R.compactPromptFlag ? `set (${R.compactPromptFlag.length} chars)` : "unset"}, --compact-footer ${R.footerEnabled ? "on" : "off"}, --${EXPERIMENTAL_FLAG} ${R.registeredExperimental ? "on" : "off"}`);
+		lines.push(`settings: --compact-soft-at ${R.specs.softAt} (${R.sources.softAt}), --compact-at ${R.specs.at} (${R.sources.at}), --compact-buffer ${R.specs.buffer} (${R.sources.buffer}), --compact-prompt ${R.compactPromptFlag ? `set (${R.compactPromptFlag.length} chars)` : "unset"}, --compact-footer ${R.footerEnabled ? "on" : "off"}, --${EXPERIMENTAL_FLAG} ${flagOn(EXPERIMENTAL_FLAG) ? "on" : "off"}`);
+		const modeState = R.modeBlocked ? `REQUESTED BUT NOT ACTIVE: ${R.modeBlocked}` : modeSummary(R.mode);
+		lines.push(`mode: ${R.mode} (source: ${R.modeSource}${R.modeSource === "flag" ? ", CLI bootstrap" : ", saved in this session"}); ${modeState}; change it with /self-compact-mode`);
 		lines.push(`variants: ${enabled() ? `active [${[R.variants.control ? `A/control ${CONTROL_TOOL_NAME}` : null, R.variants.experimental ? `B/experimental ${EXPERIMENTAL_TOOL_NAME}` : null].filter(Boolean).join(", ")}], primary ${activeToolName()}` : `none active (${CONTROL_TOOL_NAME} and ${EXPERIMENTAL_TOOL_NAME} are both inactive); the extension is passive: native compaction is not cancelled and tools are never locked`}`);
 		if (problem) lines.push(`REJECTED: ${problem} (extension is inert; every tool is blocked until fixed)`);
 		lines.push(`model: ${model}, window ${fmt(R.usage.window)} tokens, cap ${t ? fmt(t.capTokens) : "?"} (90%)`);
@@ -545,7 +700,8 @@ export default function selfCompact(pi: ExtensionAPI) {
 			if (h.error) lines.push(`last error: ${h.error}`);
 		}
 		const data = {
-			settings: { ...R.specs, compactPrompt: R.compactPromptFlag ?? null, footer: R.footerEnabled, experimental: R.registeredExperimental, sources: R.sources },
+			settings: { ...R.specs, compactPrompt: R.compactPromptFlag ?? null, footer: R.footerEnabled, experimentalFlag: flagOn(EXPERIMENTAL_FLAG), sources: R.sources },
+			mode: { selected: R.mode, source: R.modeSource, summary: modeSummary(R.mode), persisted: R.modeSource !== "flag", blocked: R.modeBlocked ?? null },
 			variants: { ...R.variants, enabled: enabled(), primary: primaryToolName(R.variants) ?? null },
 			rejected: problem ?? null,
 			model,
@@ -691,14 +847,52 @@ export default function selfCompact(pi: ExtensionAPI) {
 		});
 	}
 
-	// Variant A (control) is always registered; variant B is opt-in via --compact-experimental.
+	// Both variants are registered at load, because registration is not exposure: the selected mode
+	// decides which one is active, and Pi renders prompt snippets and guidelines from active tools
+	// only. That keeps a switch instant and makes it survive a reload without re-registering.
 	registerCompactTool(variantDefinition("control"));
+	registerCompactTool(variantDefinition("experimental"));
 
 	// -------------------------------------------------------------- commands
+
+	pi.registerCommand("self-compact-mode", {
+		description: `Select the self-compaction mode for this session (${COMPACT_MODES.join(" | ")}); saved in the session, no LLM turn`,
+		getArgumentCompletions: (prefix: string) => {
+			const needle = prefix.trim().toLowerCase();
+			const items = MODE_CHOICES.filter((choice) => choice.label.toLowerCase().startsWith(needle)).map((choice) => ({
+				value: choice.label,
+				label: choice.label,
+				description: choice.description,
+			}));
+			return items.length > 0 ? items : null;
+		},
+		handler: async (args, ctx) => {
+			const requested = args.trim();
+			let mode: CompactMode | undefined;
+			if (requested) {
+				mode = parseMode(requested);
+				if (!mode) {
+					feedback(ctx, `self-compact: "${requested}" is not a mode. Use ${COMPACT_MODES.join(", ")} (a and b are accepted too).`, "error");
+					return;
+				}
+			} else if (ctx.hasUI) {
+				const labels = MODE_CHOICES.map((choice) => `${choice.label}: ${choice.description}`);
+				const pick = await ctx.ui.select(`Self-compaction mode for this session (now: ${R.mode}):`, labels);
+				const index = pick ? labels.indexOf(pick) : -1;
+				if (index < 0) return;
+				mode = MODE_CHOICES[index]!.mode;
+			} else {
+				feedback(ctx, `self-compact: mode is ${R.mode} (${modeSummary(R.mode)}). Pass an argument: ${COMPACT_MODES.join(", ")}.`, "info");
+				return;
+			}
+			switchMode(ctx, mode);
+		},
+	});
 
 	pi.registerCommand("self-compact-info", {
 		description: "Show self-compact settings, resolved thresholds, usage, state, cycle count, prompt sources, and pending notes (no LLM turn)",
 		handler: async (_args, ctx: ExtensionCommandContext) => {
+			// A bound command context: report the state as it is, with no attempt to change tools.
 			const info = infoLines(ctx);
 			pi.appendEntry(INFO_ENTRY_TYPE, { ...info.data, lines: info.lines, at: Date.now() });
 			if (ctx.hasUI && ctx.mode !== "tui") ctx.ui.notify(info.lines.join("\n"), "info");
@@ -813,16 +1007,37 @@ export default function selfCompact(pi: ExtensionAPI) {
 		R.compactionInFlight = false;
 		R.searchDirs = promptSearchDirs(ctx.cwd, EXTENSION_DIR);
 		loadSettings();
-		// Variant B is opt-in: register it before reading the active tool set.
-		ensureExperimentalRegistered();
 		resolveVariants();
 		resolve(ctx);
+
+		const branch = ctx.sessionManager.getBranch() as never[];
+		const recovered = recoverState(branch);
+		R.state = recovered.state;
+
+		// Mode: a per-session selection wins, otherwise the CLI flags bootstrap one.
+		const persisted = recoverMode(branch);
+		const selected: CompactMode = persisted?.mode ?? bootstrapMode(flagOn(EXPERIMENTAL_FLAG));
+		const source: ModeEntry["source"] = persisted ? "session" : "flag";
+		// A saved note must never be stranded by `off`: finish the handoff on a reachable variant.
+		const wanted: CompactMode = activeHandoff() && selected === "off" ? "control" : selected;
+		let outcome = applyMode(wanted, source, "passive");
+		const alternate: CompactMode = wanted === "control" ? "experimental" : "control";
+		// Fall back to the other variant so a pending note is never stranded. Without a pending
+		// note only an already-requested variant is used: --exclude-tools self_compact alone must
+		// not silently opt a session into the experimental arm.
+		if (!outcome.ok && (activeHandoff() !== undefined || alternate === "control" || flagOn(EXPERIMENTAL_FLAG))) {
+			outcome = applyMode(alternate, source, "passive");
+		}
+		if (!outcome.ok) {
+			R.mode = selected;
+			R.modeSource = source;
+			reportModeFailure(ctx, selected, outcome);
+		}
+
 		const problem = inert();
 		if (problem && enabled()) notify(ctx, `self-compact REJECTED settings: ${problem}. Every tool is blocked until the flags are fixed.`, "error");
 
-		const recovered = recoverState(ctx.sessionManager.getBranch() as never[]);
-		R.state = recovered.state;
-		// Neither variant enabled: stay fully passive (no forced lock, no native-compaction
+		// No variant reachable: stay passive (no forced lock, no native-compaction
 		// cancellation, no guidance) so the agent is never locked out of a missing tool.
 		if (!enabled()) {
 			if (R.state.locked) {

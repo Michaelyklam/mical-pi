@@ -5,6 +5,8 @@
  * "compaction landed but the note never came back" and "journaled but unanswered" (claude-fable-5-1).
  */
 
+import type { CompactMode } from "./variants.ts";
+
 export type HandoffStatus = "pending" | "compacting" | "failed" | "ready" | "done";
 
 export interface Handoff {
@@ -32,6 +34,34 @@ export const HANDOFF_TYPE = "self-compact-handoff";
 export const PHASE_ENTRY_TYPE = "self-compact-phase";
 /** customType of /self-compact-info cards. */
 export const INFO_ENTRY_TYPE = "self-compact-info";
+/** customType of the selected-mode entry (durable per session, not sent to the LLM). */
+export const MODE_ENTRY_TYPE = "self-compact-mode";
+
+/**
+ * The mode a session selected, persisted as a custom entry on the session branch so
+ * it survives reload and resume and follows /tree navigation.
+ */
+export interface ModeEntry {
+	version: 1;
+	mode: CompactMode;
+	/** How the mode came to be: a picker/argument switch, or the CLI bootstrap. */
+	source: "user" | "session" | "flag";
+	at: number;
+}
+
+const MODES: readonly CompactMode[] = ["control", "experimental", "off"];
+
+function isModeEntry(entry: EntryLike): entry is EntryLike & { data: ModeEntry } {
+	const data = entry.data as ModeEntry | undefined;
+	return entry.type === "custom" && entry.customType === MODE_ENTRY_TYPE && data?.version === 1 && MODES.includes(data.mode);
+}
+
+/** Latest selected mode on the branch, or undefined when the session never selected one. */
+export function recoverMode(entries: EntryLike[]): ModeEntry | undefined {
+	let found: ModeEntry | undefined;
+	for (const entry of entries) if (isModeEntry(entry)) found = entry.data;
+	return found;
+}
 
 export function emptyState(): PersistedState {
 	return { version: 1, cycle: 0, locked: false };

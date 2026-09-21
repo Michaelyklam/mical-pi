@@ -105,6 +105,78 @@ export function variantDefinition(kind: VariantKind): CompactVariant {
 	return VARIANTS[kind];
 }
 
+// ------------------------------------------------------------------ modes
+
+/**
+ * Which self-compaction tool a session selected. This is a per-session choice
+ * (durable custom entry), never a global setting, so two Pi sessions can run
+ * different arms side by side.
+ */
+export type CompactMode = "control" | "experimental" | "off";
+
+export const COMPACT_MODES: readonly CompactMode[] = ["control", "experimental", "off"];
+
+export interface ModeChoice {
+	mode: CompactMode;
+	/** Picker row and `control|experimental|off` argument value. */
+	label: string;
+	description: string;
+}
+
+/** Rows of the /self-compact-mode picker, in display order. */
+export const MODE_CHOICES: readonly ModeChoice[] = [
+	{ mode: "control", label: "Control", description: `the default variant A (${CONTROL_TOOL_NAME})` },
+	{ mode: "experimental", label: "Experimental", description: `variant B of the A/B test (${EXPERIMENTAL_TOOL_NAME})` },
+	{ mode: "off", label: "Off", description: "restore native Pi compaction, no guidance and no lock" },
+];
+
+/** The tool a mode activates; `off` activates neither variant. */
+export function modeToolName(mode: CompactMode): string | undefined {
+	if (mode === "control") return CONTROL_TOOL_NAME;
+	if (mode === "experimental") return EXPERIMENTAL_TOOL_NAME;
+	return undefined;
+}
+
+/** One-line description of what a mode turns on (info output and toasts). */
+export function modeSummary(mode: CompactMode): string {
+	if (mode === "control") return `only ${CONTROL_TOOL_NAME} is active`;
+	if (mode === "experimental") return `only ${EXPERIMENTAL_TOOL_NAME} is active`;
+	return "native Pi compaction is restored; no guidance, no lock, no cancellation";
+}
+
+/**
+ * Parse a /self-compact-mode argument. Accepts the mode names plus the A/B
+ * shorthands `a` and `b`; returns undefined for anything else.
+ */
+export function parseMode(value: string): CompactMode | undefined {
+	switch (value.trim().toLowerCase()) {
+		case "control":
+		case "a":
+			return "control";
+		case "experimental":
+		case "experiment":
+		case "b":
+			return "experimental";
+		case "off":
+		case "none":
+			return "off";
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * Mode for a session that has no persisted selection: `--compact-experimental`
+ * asks for variant B, everything else starts on the control variant. Which tool
+ * actually comes up is Pi's decision: `setActiveTools` applies the hard
+ * `--tools` / `--exclude-tools` filters, and the recovery path falls back to the
+ * other already-requested variant when the first one is denied, or reports that
+ * no mode could be activated.
+ */
+export function bootstrapMode(experimentalFlag: boolean): CompactMode {
+	return experimentalFlag ? "experimental" : "control";
+}
+
 /** Which self-compaction tools Pi currently has active. */
 export interface VariantState {
 	control: boolean;

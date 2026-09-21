@@ -8,6 +8,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+	bootstrapMode,
+	COMPACT_MODES,
 	CONTROL_TOOL_NAME,
 	EXPERIMENTAL_FLAG,
 	EXPERIMENTAL_PROMPT,
@@ -15,6 +17,10 @@ import {
 	experimentalGuidance,
 	hasEnabledVariant,
 	isCompactToolName,
+	MODE_CHOICES,
+	modeSummary,
+	modeToolName,
+	parseMode,
 	primaryToolName,
 	selectVariants,
 	variantDefinition,
@@ -95,4 +101,38 @@ test("the experimental guidance carries the exact prompt plus live numbers at ev
 	assert.match(experimentalGuidance("forced"), /\{\{tool_name\}\}/);
 	assert.match(experimentalGuidance("forced"), /Every tool except/);
 	assert.match(experimentalGuidance("warning"), /as your only tool call/);
+});
+
+test("mode vocabulary: parse the arguments, describe the modes, resolve the tool and the summary", () => {
+	assert.deepEqual(COMPACT_MODES, ["control", "experimental", "off"]);
+	assert.deepEqual(MODE_CHOICES.map((choice) => choice.mode), ["control", "experimental", "off"]);
+	// The picker labels are what `ui.select` returns and what the argument parser accepts.
+	assert.deepEqual(MODE_CHOICES.map((choice) => choice.label), ["Control", "Experimental", "Off"]);
+	for (const choice of MODE_CHOICES) assert.equal(parseMode(choice.label), choice.mode, `${choice.label} round-trips`);
+
+	assert.equal(parseMode(" Control "), "control");
+	assert.equal(parseMode("a"), "control");
+	assert.equal(parseMode("B"), "experimental");
+	assert.equal(parseMode("experiment"), "experimental");
+	assert.equal(parseMode("OFF"), "off");
+	assert.equal(parseMode("none"), "off");
+	assert.equal(parseMode(""), undefined);
+	assert.equal(parseMode("self_compact"), undefined);
+	assert.equal(parseMode("control please"), undefined);
+
+	assert.equal(modeToolName("control"), CONTROL_TOOL_NAME);
+	assert.equal(modeToolName("experimental"), EXPERIMENTAL_TOOL_NAME);
+	assert.equal(modeToolName("off"), undefined, "off activates no variant tool");
+
+	// `off` is the only mode whose summary promises native compaction and no lock.
+	assert.match(modeSummary("off"), /native Pi compaction is restored/);
+	assert.match(modeSummary("off"), /no lock/);
+	assert.match(modeSummary("control"), new RegExp(`only ${CONTROL_TOOL_NAME} is active`));
+	assert.match(modeSummary("experimental"), new RegExp(`only ${EXPERIMENTAL_TOOL_NAME} is active`));
+});
+
+test("bootstrap is flag-driven: control by default, experimental only when the flag asks for it", () => {
+	assert.equal(bootstrapMode(false), "control");
+	assert.equal(bootstrapMode(true), "experimental");
+	assert.equal(bootstrapMode(false), "control", "the plain default never asks for variant B");
 });

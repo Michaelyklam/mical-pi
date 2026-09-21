@@ -253,8 +253,8 @@ is included unchanged.
 Lets a long-running agent manage its own context window. Three thresholds track usage: a notice
 line, a warning line, and a hard cutoff. Crossing the notice or warning line sends the model a
 transient guidance message on the next request without persisting it in the transcript. At the
-hard cutoff every tool except `self_compact` and `view_context` is blocked until the agent
-compacts.
+hard cutoff every tool except the enabled self-compaction tool and `view_context` is blocked until
+the agent compacts.
 
 The agent compacts by calling the enabled self-compaction tool (`self_compact` by default, or
 `self_compact_experimental` when the A/B experiment below is enabled) with a `note_to_self`. The
@@ -291,59 +291,74 @@ fields are clamped down and reported in `/self-compact-info`; an explicit flag t
 ordering or the cap is rejected and leaves the extension inert with every tool blocked. Clamping is
 per field, so setting one flag does not disable clamping for the others.
 
-#### A/B test: `self_compact` (control) vs `self_compact_experimental`
+#### Compaction mode: `self_compact` (control) vs `self_compact_experimental` (experiment)
 
-The extension can expose two self-compaction tools that share the entire engine (thresholds, forced
+The extension ships two self-compaction tools that share the entire engine (thresholds, forced
 lock, note handoff, persisted state) and differ only in the prompt the agent sees. Variant A is the
-existing `self_compact` tool and stays the default control. Variant B is
-`self_compact_experimental`, registered only when `--compact-experimental` is passed; its tool
-description, prompt snippet, guidelines, note parameter, and threshold messages use the exact
-wording requested for the experiment:
+existing `self_compact` tool and is the default control. Variant B is
+`self_compact_experimental`, and its tool description, prompt snippet, guidelines, note parameter,
+and threshold messages use the exact wording requested for the experiment:
 
 > if the current context contains many tool calls, compact your own context and turn them into
 > summaries of what our overall goal is, what we are currently working on, and what steps we've been
 > through including summaries of failures and possible next paths. Leave a message for yourself for
 > what to prioritize next.
 
-Tool selection is Pi's, not the extension's. `--tools` is a strict allowlist and `--exclude-tools`
-a denylist, both covering extension tools; the extension reads `pi.getActiveTools()` and targets the
-enabled variant in the system-prompt line, threshold messages, forced-lock errors, and commands.
-When both are enabled the control tool is the canonical name in those messages. When neither is
-enabled the extension is passive: it does not cancel Pi's automatic compaction, never locks tools,
-and sends no guidance, so an exclusion can never leave the agent blocked on a missing tool. The
-read-only `view_context` gauge stays registered, because it changes nothing.
+`/self-compact-mode` picks the mode for the current session with a picker (`Control`,
+`Experimental`, `Off`). Arguments skip the picker, which is what scripts and noninteractive runs
+use: `/self-compact-mode experimental`, `/self-compact-mode control`, `/self-compact-mode off`
+(`a`, `b`, and `none` are accepted aliases). The choice is stored as a durable entry in that
+session only, so two Pi sessions can run different arms side by side and a resumed session keeps
+its arm. New sessions start on Control. The command makes no model turn.
 
-| configuration | command |
+Both tools are registered at load, because registration is not exposure: exactly one variant is
+active at a time, and Pi renders prompt snippets, guidelines, and tool descriptions from active
+tools only. The extension reads `pi.getActiveTools()` and targets the enabled variant in the
+system-prompt line, threshold messages, forced-lock errors, and commands, so the inactive arm never
+appears in a request.
+
+| mode | what the session runs |
 | --- | --- |
-| A only (the default/control) | `pi -e extensions/self-compact/index.ts` |
-| B added (both live) | `pi -e extensions/self-compact/index.ts --compact-experimental` |
-| B only | `pi -e extensions/self-compact/index.ts --compact-experimental --exclude-tools self_compact` |
-| neither (native compaction untouched) | `pi -e extensions/self-compact/index.ts --exclude-tools self_compact,self_compact_experimental` |
+| `Control` (default) | `self_compact` only |
+| `Experimental` | `self_compact_experimental` only |
+| `Off` | neither; Pi's automatic compaction is left alone and no tool is ever locked |
 
-`--exclude-tools self_compact_experimental` without `--compact-experimental` is a no-op, because B
-is never registered. `--tools` works too but is a strict allowlist across *all* tools, so the
-cleaner A/B toggle is `--exclude-tools`. `/self-compact-info` reports the active variants, the
-primary tool, and the `--compact-experimental` state; `/self-compact-now` targets the enabled
-variant and refuses when neither is enabled. Variant A keeps reading the vendored,
-user-overridable prompt files under `.pi/self-compact/`; variant B always uses the experimental
-wording, so those overrides only affect A.
+A session that saves a note and then switches to `Off` is refused until the handoff settles, so a
+saved note is never stranded; resuming a session whose mode is `Off` while a note is pending falls
+back to a compaction-capable mode instead.
+
+One flag still bootstraps a new session you do not want to switch by hand: `--compact-experimental`
+starts it on the Experimental mode and persists that choice like a picker switch. `--tools` and
+`--exclude-tools` stay Pi's hard filters, and they win. A switch that Pi refuses is transactional:
+the previous variant keeps running with every unrelated tool, the refusal is reported, and nothing
+is persisted. A saved mode that Pi refuses at startup leaves the session passive instead, reported
+in `/self-compact-info` and in a warning, rather than pretending the mode is live. `--tools` is a
+strict allowlist across *all* tools, so `--exclude-tools` is the cleaner filter for one variant.
+
+Read-only `view_context` stays registered in every mode, `Off` included, because it changes nothing.
+`/self-compact-info` reports the mode, its source (picker, saved entry, or CLI bootstrap), and
+whether the selection is blocked; `/self-compact-now` targets the enabled variant and refuses when
+the mode is `Off`. Variant A keeps reading the vendored, user-overridable prompt files under
+`.pi/self-compact/`; variant B always uses the experimental wording, so those overrides only affect
+A.
 
 Pi subagents are outside the experiment. A child session is built with
 `createAgentSession({ excludeTools: CHILD_EXCLUDED_TOOL_NAMES })` in
-`extensions/subagents/src/backends/pi.ts` and inherits none of the parent's CLI flags, so
-`--compact-experimental` never reaches a child. Every child therefore runs variant A, and B is
-never registered there; `--tools` and `--exclude-tools` are not forwarded either. Per-child variant
-selection is not available today. The only lever in the subagents source is
-`CHILD_EXCLUDED_TOOL_NAMES`, which can turn self-compaction off inside children by excluding
-`self_compact`, but cannot select variant B. Pi's `ExtensionRunner` exposes `getFlagValues()` and
-`setFlagValue()` if that forwarding is ever wired up.
+`extensions/subagents/src/backends/pi.ts` and inherits neither the parent's CLI flags nor its mode
+entry, so `--compact-experimental` and a parent's Experimental mode never reach a child. Every
+child therefore runs variant A and B stays inactive there; `--tools` and `--exclude-tools` are not
+forwarded either. Per-child variant selection is not available today. The only lever in the
+subagents source is `CHILD_EXCLUDED_TOOL_NAMES`, which can turn self-compaction off inside children
+by excluding `self_compact`, but cannot select variant B. Pi's `ExtensionRunner` exposes
+`getFlagValues()` and `setFlagValue()` if that forwarding is ever wired up.
 
 Vendored from
 [disler/self-compact-pi-agent](https://github.com/disler/self-compact-pi-agent/tree/576fe4abda021849f5cde5b6f5796467ffa4bcbd)
 at upstream commit `576fe4a` (MIT, Copyright (c) 2026 IndyDevDan). Local changes: fixed-baseline
 token defaults, per-field clamping, the default prompt files moved to
 `extensions/self-compact/prompts/`, the entry renamed to `index.ts`, the footer bar gated
-behind `--compact-footer`, and the opt-in A/B experimental variant B (`variants.ts`). The upstream sample app,
+behind `--compact-footer`, and the A/B experiment with its per-session mode selector
+(`variants.ts`, `state.ts`, `/self-compact-mode`). The upstream sample app,
 verification scripts, and e2e tests are not vendored; that detail and the full change list live in
 [`extensions/self-compact/UPSTREAM.md`](extensions/self-compact/UPSTREAM.md). Tests run with
 `npm run test:self-compact`.
