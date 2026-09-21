@@ -102,8 +102,8 @@ separate extensions.
      compaction-capable mode, so a saved note is never stranded.
    - Variant B's prompt is the user's A/B-test wording, kept verbatim in `variants.ts`
      (`EXPERIMENTAL_PROMPT`) and exposed on every prompt surface: tool description, prompt snippet,
-     prompt guidelines, the `note_to_self` parameter description, and the transient notice/warning/
-     forced guidance messages.
+     prompt guidelines, the `note_to_self` parameter description, and the once-per-crossing notice/
+     warning/forced guidance message.
    - Tool selection stays Pi's: `--tools` (strict allowlist) and `--exclude-tools` (denylist) cover
      extension tools, and the extension reads `pi.getActiveTools()` for both `enabled()` and the
      variant it targets. Exactly one variant is active in every mode, so every extension-generated
@@ -176,6 +176,32 @@ separate extensions.
      `--tools`-denied selection all behaved as described above.
 
 No behavioural changes were made to `summary.ts`, `state.ts`, or `context-bar.ts`.
+
+7. **Append-only threshold guidance (prompt-cache boundary fix)** (`index.ts`, `cache-prefix.test.ts`,
+   `extension.test.ts`, README). Upstream rebuilt one transient guidance message on every LLM call:
+   the `context` hook filtered the previous one out of the message list and pushed a fresh copy
+   rendered from the current numbers, and the idle "compact now" nudge (sent with
+   `triggerTurn: true`) was filtered out the same way on the next call. Both rewrote prompt material
+   the provider had already seen. The local version instead appends the guidance once per level per
+   context epoch with `pi.sendMessage(..., { triggerTurn: false })` (Pi journals it as a
+   `custom_message` entry, which `convertToLlm` turns into a user message for the provider) and never
+   edits or removes it afterwards; `view_context` reports the live numbers, so nothing needs
+   re-rendering. The `context` hook now only detects crossings and returns `undefined`. The idle
+   nudge has its own customType (`self-compact-nudge`) so it is never filtered either. Per-epoch
+   re-announcement is restored from the compaction-aware context projection, so a reload, resume, or
+   `/tree` move never duplicates a guidance message already in the model's context, while a
+   compaction that summarizes it away lets the new epoch announce again.
+
+   Why a guidance message cannot simply be re-rendered: Pi's Anthropic serializer
+   (`pi-ai/dist/api/anthropic-messages.js`) accepts only user/assistant/toolResult messages and puts
+   `cache_control` on the system prompt, the last tool, and the last user message. A prefix cache is
+   reused up to the first block that differs from a cached prefix, so a block that changes or
+   vanishes in the middle invalidates the cache from that block onward and every later tool result
+   has to be written again on each turn. `cache-prefix.test.ts` drives the real extension through the
+   real extension loader, models Pi's per-request pipeline (session projection -> `context` hook ->
+   `convertToLlm`) and asserts that every request payload is an exact prefix extension of the
+   previous one across the notice/warning/forced crossings, a mode switch to `off`, a reload, and the
+   idle nudge. It uses no provider, no sleeps, and no fake server.
 
 ## Native overflow behavior
 

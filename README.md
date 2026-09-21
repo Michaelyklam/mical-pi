@@ -251,10 +251,22 @@ is included unchanged.
 ### `extensions/self-compact`
 
 Lets a long-running agent manage its own context window. Three thresholds track usage: a notice
-line, a warning line, and a hard cutoff. Crossing the notice or warning line sends the model a
-transient guidance message on the next request without persisting it in the transcript. At the
+line, a warning line, and a hard cutoff. Crossing a line appends one guidance message to the
+session with the numbers from that moment; `view_context` reports the current numbers. At the
 hard cutoff every tool except the enabled self-compaction tool and `view_context` is blocked until
 the agent compacts.
+
+Guidance is append-only. It used to be re-rendered on every LLM call and spliced out of the
+transcript between calls, which rewrote prompt material the provider had already cached: Pi puts
+its Anthropic cache breakpoint on the system prompt, the last tool, and the last user message, so
+a block that changes or disappears in the middle discards the cached prefix from that block on,
+and every later tool result is re-written on each turn. Now each crossing appends exactly one
+message (once per line per context epoch), the history is never rewritten, and the `context` hook
+only detects crossings. The numbers in a guidance message are a snapshot; `view_context` gives the
+live ones, and each crossing still shows the full guidance text once in the TUI. `cache-prefix.test.ts`
+pins this boundary down by asserting that every request is an exact prefix extension of the last.
+For an A/B comparison, start fresh sessions and select the mode before the task. Switching modes
+changes the tool/system prompt and does not remove guidance already present in the conversation.
 
 The agent compacts by calling the enabled self-compaction tool (`self_compact` by default, or
 `self_compact_experimental` when the A/B experiment below is enabled) with a `note_to_self`. The

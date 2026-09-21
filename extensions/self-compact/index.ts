@@ -14,9 +14,13 @@
  *   This extension cancels Pi's automatic compaction, overflow recovery included, and replaces it
  *   with the note handoff below. The 90% cap is headroom for the note and the summarizer call, not
  *   a safety net against a turn that outgrows the window.
- * - Guidance reaches the model as a transient message on each LLM call while a phase is active
- *   (the `context` hook); it is never persisted into the model's context. Each threshold crossing shows the full
- *   guidance message once in the TUI. The transcript otherwise only shows the user's prompts and the returned note.
+ * - Guidance reaches the model as one persisted message per threshold crossing (the `context` hook
+ *   never rewrites the message list). Each crossing appends the guidance once, with a snapshot of
+ *   the numbers at that moment; `view_context` reports the live numbers. Appending is what keeps the
+ *   provider's prefix cache intact: re-rendering or removing a block that was already sent discards
+ *   the cache from that block on (see cache-prefix.test.ts). Each threshold crossing still shows the
+ *   full guidance message once in the TUI. The transcript otherwise only shows the user's prompts,
+ *   the guidance messages once, the idle nudges, and the returned note.
  * - `view_context()` returns used tokens, percent, level, and the thresholds as JSON, since the model cannot see the footer.
  * - At the forced threshold every tool except the enabled self-compaction tool and `view_context` is blocked in
  *   `tool_call` with an explicit reason (the active tool list is never narrowed: Pi would answer
@@ -101,6 +105,7 @@ import {
 	latestAssistantUsage,
 	recoverMode,
 	recoverState,
+	type EntryLike,
 	type Handoff,
 	type ModeEntry,
 	type PersistedState,
@@ -124,7 +129,14 @@ export { HANDOFF_TYPE, STATE_TYPE };
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const MAX_AUTO_RETRIES = 3;
 const SUMMARY_ATTEMPTS = 2;
+/**
+ * customType of the persisted threshold guidance message. Pi journals it as a `custom_message`
+ * entry and turns it into a user message for the provider, so it must be written once and then
+ * left alone: rewriting or dropping it invalidates the provider's prefix cache.
+ */
 const GUIDANCE_TYPE = "self-compact-guidance";
+/** customType of the idle "compact now" nudge; it is an ordinary append-only message. */
+const NUDGE_TYPE = "self-compact-nudge";
 
 /**
  * Static system-prompt line for the active variant. It names the enabled
@@ -137,7 +149,7 @@ function systemPromptLine(tool: string, viewActive: boolean): string {
 	const view = viewActive
 		? `You cannot see your own context usage otherwise: call ${VIEW_TOOL_NAME} (no arguments) whenever you need the current numbers as JSON, for example after a compaction or before deciding to compact; do not poll it every turn. `
 		: "";
-	return `\n\nself-compact: when context usage crosses a threshold you receive a transient [self-compact · …] message with live numbers. ${view}Call ${tool} alone in a tool batch when you decide to compact, or when a [self-compact · …] message asks you to. After a compaction, your own saved note_to_self is returned to you verbatim as the next message (exactly the note text, nothing else); resume its NEXT ACTION without another user message and never restart work the note marks as done. If no work remains, report completion and stop.`;
+	return `\n\nself-compact: when context usage crosses a threshold you receive a [self-compact · …] message with the numbers from that crossing. ${view}Call ${tool} alone in a tool batch when you decide to compact, or when a [self-compact · …] message asks you to. After a compaction, your own saved note_to_self is returned to you verbatim as the next message (exactly the note text, nothing else); resume its NEXT ACTION without another user message and never restart work the note marks as done. If no work remains, report completion and stop.`;
 }
 
 interface UsageSnapshot {
@@ -161,6 +173,8 @@ interface Runtime {
 	/** Context epoch: bumps on every compaction and session start so per-epoch guidance re-arms. */
 	epoch: number;
 	announcedLevel: UsageLevel;
+	/** Highest level whose guidance message has been persisted in this epoch (context-facing, append-only). */
+	guidanceLevel: UsageLevel;
 	compactionInFlight: boolean;
 	footerEnabled: boolean;
 	lastCompactionError?: string;
@@ -189,10 +203,6 @@ function nowPrompt(tool: string, saved?: string): string {
 	const base = `Compact now: write your note_to_self (max ${NOTE_MAX_CHARS} chars: goal, DONE with exact paths and commands, IN PROGRESS, key decisions, verified test results, exact NEXT ACTION last) and call ${tool} as your only tool call.`;
 	if (!saved) return base;
 	return `${base}\n\nA note is already saved from a previous attempt. Pass it to ${tool} verbatim instead of inventing a new one. Saved note, verbatim:\n\n${saved}\n\n---\nCall ${tool} now with exactly that note.`;
-}
-
-function guidanceMessage(text: string) {
-	return { role: "custom" as const, customType: GUIDANCE_TYPE, content: text, display: false, timestamp: Date.now() };
 }
 
 function levelColor(level: UsageLevel): "dim" | "accent" | "warning" | "error" | "muted" {
@@ -236,6 +246,7 @@ export default function selfCompact(pi: ExtensionAPI) {
 		state: emptyState(),
 		epoch: 0,
 		announcedLevel: "idle",
+		guidanceLevel: "idle",
 		compactionInFlight: false,
 		footerEnabled: false,
 		alive: true,
@@ -393,6 +404,9 @@ export default function selfCompact(pi: ExtensionAPI) {
 		R.modeSource = source;
 		R.modeBlocked = undefined;
 		R.announcedLevel = "idle";
+		// A switch changes the arm's guidance, so the next turn announces the current level for it;
+		// the previous arm's message stays in the history untouched.
+		R.guidanceLevel = "idle";
 		R.systemPromptCache = undefined;
 		clearTimers();
 		if (mode === "off") setLocked(false);
@@ -593,29 +607,68 @@ export default function selfCompact(pi: ExtensionAPI) {
 			pi.appendEntry(PHASE_ENTRY_TYPE, { level, tokens: R.usage.tokens, percent: R.usage.percent, text, at: Date.now() });
 			if (ctx.mode !== "tui") notify(ctx, `self-compact: ${levelTag(level).toLowerCase()} threshold crossed at ${formatPct(R.usage.percent, 1)}${level === "forced" ? `; tools locked until ${activeToolName()} runs` : ""}`, level === "forced" ? "error" : level === "warning" ? "warning" : "info");
 		}
+		// Model-facing guidance is appended once per level per epoch and then never touched again.
+		if (LEVEL_ORDER[level] > LEVEL_ORDER[R.guidanceLevel] && !activeHandoff() && compactable(ctx)) persistGuidance(ctx, level);
 	}
 
 	/**
-	 * The guidance message for a level. Variant A renders the (user-overridable)
-	 * prompt files; variant B renders the experimental prompt with the same live
-	 * numbers and thresholds. When both are enabled the control prompt wins.
+	 * Write the guidance for a level into the session once: this only ever appends.
+	 *
+	 * The numbers are a snapshot from the crossing and `view_context` reports live numbers, so the
+	 * message never has to be regenerated. Keeping it append-only is what preserves the provider's
+	 * prefix cache: a re-rendered or removed block invalidates the cache from that block onward, and
+	 * every later tool result is then re-written on each turn (cache-prefix.test.ts pins this down).
 	 */
+	function persistGuidance(ctx: ExtensionContext, level: UsageLevel) {
+		if (!R.alive) return;
+		R.usage = snapshotUsage(ctx);
+		let text: string;
+		try {
+			text = renderGuidance(level);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (!R.promptErrors.has(message)) {
+				R.promptErrors.add(message);
+				notify(ctx, `self-compact: ${message}`, "warning");
+			}
+			text = renderTemplate(level === "forced" ? FORCED_PROMPT : BUILTIN_PROMPTS[level === "notice" ? "soft" : "warning"], templateValues());
+		}
+		R.guidanceLevel = level;
+		pi.sendMessage(
+			{ customType: GUIDANCE_TYPE, content: text, display: false, details: { level, epoch: R.epoch, cycle: R.state.cycle, tokens: R.usage.tokens, percent: R.usage.percent } },
+			{ triggerTurn: false },
+		);
+	}
+
+	/**
+	 * Highest level whose persisted guidance is still in the model's context, so a reload, resume, or
+	 * tree move never appends a second copy of a crossing the model already saw. The compaction-aware
+	 * projection is used on purpose: once a compaction summarizes the old guidance away, the new epoch
+	 * may announce again.
+	 */
+	function restoredGuidanceLevel(ctx: ExtensionContext): UsageLevel {
+		let entries: EntryLike[];
+		try {
+			entries = (ctx.sessionManager.buildContextEntries() ?? ctx.sessionManager.getBranch()) as never[];
+		} catch {
+			entries = ctx.sessionManager.getBranch() as never[];
+		}
+		let level: UsageLevel = "idle";
+		for (const entry of entries) {
+			if (entry.type !== "custom_message" || entry.customType !== GUIDANCE_TYPE) continue;
+			const value = (entry.details as { level?: UsageLevel } | undefined)?.level;
+			if (value && LEVEL_ORDER[value] > LEVEL_ORDER[level]) level = value;
+		}
+		return level;
+	}
+
+	/** The guidance body for a level; used by persistGuidance and the TUI crossing line. */
 	function renderGuidance(level: UsageLevel): string {
 		const guidanceLevel: GuidanceLevel = level === "forced" ? "forced" : level === "notice" ? "notice" : "warning";
 		if (R.variants.experimental && !R.variants.control) return renderTemplate(experimentalGuidance(guidanceLevel), templateValues());
 		if (level === "notice") return renderTemplate(loadPromptFile("soft", R.searchDirs).text, templateValues());
 		if (level === "forced") return renderTemplate(FORCED_PROMPT, templateValues());
 		return renderTemplate(loadPromptFile("warning", R.searchDirs).text, templateValues());
-	}
-
-	/** One transient guidance message is rebuilt from current usage for every LLM call. */
-	function guidanceText(ctx: ExtensionContext): string | undefined {
-		if (!enabled()) return undefined;
-		if (inert() || !R.thresholds || activeHandoff()) return undefined;
-		const level = locked() ? "forced" : R.level;
-		if (level === "unknown" || level === "idle") return undefined;
-		if (!compactable(ctx)) return undefined;
-		return renderGuidance(level);
 	}
 
 	function deliverHandoff(ctx: ExtensionContext) {
@@ -690,7 +743,7 @@ export default function selfCompact(pi: ExtensionAPI) {
 			for (const note of t.notes) lines.push(`note: ${note}`);
 		}
 		lines.push(`usage: ${R.usage.tokens === null ? "unknown" : `${fmt(R.usage.tokens)} tokens (${formatPct(R.usage.percent, 1)}), ${fmt(R.usage.cachedTokens)} cached`}  ${contextBarText()}`);
-		lines.push(`state: level ${R.level}, tools ${locked() ? `LOCKED (only ${activeToolName()})` : "unlocked"}, handoff ${h?.status ?? "none"}, attempts ${h?.attempts ?? 0}, compaction ${R.compactionInFlight ? "in flight" : "idle"}`);
+		lines.push(`state: level ${R.level}, guidance ${R.guidanceLevel}, tools ${locked() ? `LOCKED (only ${activeToolName()})` : "unlocked"}, handoff ${h?.status ?? "none"}, attempts ${h?.attempts ?? 0}, compaction ${R.compactionInFlight ? "in flight" : "idle"}`);
 		lines.push(`cycles completed: ${R.state.cycle}`);
 		lines.push(`prompts: soft ${soft.source} (${soft.text.length} chars), warning ${warning.source} (${warning.text.length} chars), compaction ${compaction.source} (${compaction.text.length} chars)`);
 		lines.push(`summary user instructions: ${summaryInstructions.source} (${summaryInstructions.text.length} chars)`);
@@ -1033,6 +1086,10 @@ export default function selfCompact(pi: ExtensionAPI) {
 			R.modeSource = source;
 			reportModeFailure(ctx, selected, outcome);
 		}
+		// Restore what the model already saw. This runs after applyMode, because selecting a mode
+		// clears guidanceLevel for the new arm; a reload or /tree move must never duplicate a
+		// guidance message the model already has.
+		R.guidanceLevel = restoredGuidanceLevel(ctx);
 
 		const problem = inert();
 		if (problem && enabled()) notify(ctx, `self-compact REJECTED settings: ${problem}. Every tool is blocked until the flags are fixed.`, "error");
@@ -1115,21 +1172,12 @@ export default function selfCompact(pi: ExtensionAPI) {
 		return { systemPrompt: event.systemPrompt + R.systemPromptCache.text };
 	});
 
-	pi.on("context", async (event, ctx) => {
+	pi.on("context", async (_event, ctx) => {
+		// Detection point only. This hook must never rewrite the message list: removing or
+		// re-rendering a block that was already sent discards the provider's prefix cache from that
+		// block on, which re-writes every later tool result on each turn (see cache-prefix.test.ts).
 		trackLevel(ctx);
-		const messages = event.messages.filter(message => !(message.role === "custom" && message.customType === GUIDANCE_TYPE));
-		try {
-			const text = guidanceText(ctx);
-			if (text) messages.push(guidanceMessage(text));
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (!R.promptErrors.has(message)) {
-				R.promptErrors.add(message);
-				notify(ctx, `self-compact: ${message}`, "warning");
-			}
-			if (R.level === "warning") messages.push(guidanceMessage(renderTemplate(BUILTIN_PROMPTS.warning, templateValues())));
-		}
-		return { messages };
+		return undefined;
 	});
 
 	pi.on("message_end", async (event, ctx) => {
@@ -1198,7 +1246,8 @@ export default function selfCompact(pi: ExtensionAPI) {
 		if (!enabled() || inert() || activeHandoff() || R.idleRequestEpoch === R.epoch) return;
 		if (!locked() && R.level !== "warning" && R.level !== "forced") return;
 		R.idleRequestEpoch = R.epoch;
-		pi.sendMessage({ customType: GUIDANCE_TYPE, content: nowPrompt(activeToolName()), display: false }, { triggerTurn: true, deliverAs: "followUp" });
+		// The nudge is an ordinary append-only message: it is never spliced out of the history later.
+		pi.sendMessage({ customType: NUDGE_TYPE, content: nowPrompt(activeToolName()), display: false }, { triggerTurn: true, deliverAs: "followUp" });
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
@@ -1262,6 +1311,9 @@ export default function selfCompact(pi: ExtensionAPI) {
 	pi.on("session_compact", async (event, ctx) => {
 		R.epoch += 1;
 		R.announcedLevel = "idle";
+		// The compaction rewrote history: guidance summarized away re-announces in the new epoch,
+		// guidance still inside the kept window does not.
+		R.guidanceLevel = restoredGuidanceLevel(ctx);
 		R.compactionInFlight = false;
 		// Neither variant enabled: native compaction ran; just release any stale lock.
 		if (!enabled()) {

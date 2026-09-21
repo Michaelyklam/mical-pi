@@ -5,10 +5,10 @@
  * tool (`self_compact_experimental`). Both are the SAME engine: same thresholds,
  * same forced lock, same note handoff, same persisted state. The only variable
  * is the prompt surface the agent sees (tool description, prompt snippet,
- * prompt guidelines, and the transient threshold guidance messages).
+ * prompt guidelines, and the once-per-crossing threshold guidance message).
  *
- * Variant B (experimental) is opt-in: it is only registered when the boolean
- * extension flag `--compact-experimental` is set. Variant B's prompt is the
+ * Both tools are registered, but only the selected mode's tool is active. Variant B
+ * is selected with /self-compact-mode or the --compact-experimental bootstrap flag. Its prompt is the
  * user's A/B-test wording, kept verbatim in EXPERIMENTAL_PROMPT; do not reword it.
  *
  * Which variants are live is decided by Pi, not by this module: `--exclude-tools`
@@ -34,7 +34,7 @@ export const EXPERIMENTAL_PROMPT =
 
 export type VariantKind = "control" | "experimental";
 
-/** Threshold levels that get a transient guidance message. */
+/** Threshold levels that get one persisted guidance message per crossing. */
 export type GuidanceLevel = "notice" | "warning" | "forced";
 
 export interface CompactVariant {
@@ -49,7 +49,7 @@ export interface CompactVariant {
 	promptGuidelines: string[];
 	/** Description of the note_to_self parameter. */
 	noteDescription: string;
-	/** Transient guidance bodies; undefined means "read the vendored prompt files" (control). */
+	/** Guidance bodies rendered once per crossing; undefined means "read the vendored prompt files" (control). */
 	guidance?: (level: GuidanceLevel) => string;
 }
 

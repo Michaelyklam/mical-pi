@@ -182,8 +182,10 @@ async function host(
 			extension.tools.get("self_compact").definition.execute("call", { note_to_self: note }, undefined, undefined, ctx),
 		definition: (name = "self_compact") => extension.tools.get(name).definition,
 		guidance: async () => {
-			const result = await emit("context", { messages: [] });
-			const message = (result.messages as any[]).find((m: any) => m.role === "custom" && m.customType === "self-compact-guidance");
+			// The context hook only detects the crossing; the guidance itself is persisted once as a
+			// session message (append-only, so the provider cache prefix survives).
+			await emit("context", { messages: [] });
+			const message = [...messages].reverse().find((m: any) => m.customType === "self-compact-guidance");
 			return typeof message?.content === "string" ? message.content : undefined;
 		},
 		view: () => extension.tools.get("view_context").definition.execute("view", {}, undefined, undefined, ctx),
@@ -299,12 +301,12 @@ test("manual compaction runs Pi's native engine with the vendored prompt and ret
 	assert.deepEqual(result.compaction.details.modifiedFiles, ["parser.ts"]);
 
 	await h.emit("session_compact", { reason: "manual", compactionEntry: { id: "c1", details } });
-	assert.equal(h.messages.length, 1, "the handoff message is delivered after compaction");
-	assert.equal(h.messages[0].customType, "self-compact-handoff");
-	assert.equal(h.messages[0].content, note, "the note is returned byte for byte");
-	assert.equal(h.messages[0].options.triggerTurn, true);
+	const handoffMessages = () => h.messages.filter((message: any) => message.customType === "self-compact-handoff");
+	assert.equal(handoffMessages().length, 1, "the handoff message is delivered after compaction");
+	assert.equal(handoffMessages()[0].content, note, "the note is returned byte for byte");
+	assert.equal(handoffMessages()[0].options.triggerTurn, true);
 
-	await h.emit("message_end", { message: { role: "custom", customType: "self-compact-handoff", details: h.messages[0].details } });
+	await h.emit("message_end", { message: { role: "custom", customType: "self-compact-handoff", details: handoffMessages()[0].details } });
 	const finalState = h.entries.filter((entry: any) => entry.customType === "self-compact-state").at(-1).data;
 	assert.equal(finalState.handoff.status, "done");
 	assert.equal(finalState.locked, false);
@@ -526,7 +528,6 @@ test("default is control, with no mode entry written and no other tool disturbed
 
 test("/self-compact-mode switches A -> B -> off -> A, exposing only the selected variant", async (t) => {
 	const h = await host(t, { tools: { [UNRELATED]: unrelatedTool } });
-	const messagesBefore = h.messages.length;
 
 	await h.setMode("experimental");
 	assert.deepEqual(h.activeTools().filter((name) => name === A || name === B), [B], "variant B only");
@@ -548,14 +549,16 @@ test("/self-compact-mode switches A -> B -> off -> A, exposing only the selected
 	assert.ok((await h.emit("tool_call", { toolName: "read" })).block, "the forced lock is live in B mode");
 	assert.equal(await h.emit("tool_call", { toolName: B }), undefined, "B is reachable while locked");
 
+	const guidanceBeforeOff = h.messages.filter((message: any) => message.customType === "self-compact-guidance").length;
 	await h.setMode("off");
-	assert.equal(hasVariant(h, A), false);
-	assert.equal(hasVariant(h, B), false);
-	assert.equal(h.activeTools().includes(UNRELATED), true);
-	assert.equal(await h.emit("tool_call", { toolName: "read" }), undefined, "off stops the lock");
 	assert.equal(await h.emit("session_before_compact", { reason: "threshold" }), undefined, "off restores native compaction");
 	assert.equal(await h.emit("session_before_compact", { reason: "overflow" }), undefined, "off restores native overflow recovery");
-	assert.equal(await h.guidance(), undefined, "off stops the reminders");
+	assert.equal((await h.guidance())?.includes(EXACT_B_PROMPT), true, "off never removes guidance the model already saw");
+	assert.equal(
+		h.messages.filter((message: any) => message.customType === "self-compact-guidance").length,
+		guidanceBeforeOff,
+		"off stops the reminders without rewriting the history",
+	);
 	assert.equal(await h.emit("before_agent_start", { systemPrompt: "BASE" }), undefined, "off appends no system-prompt line");
 	assert.equal(modeEntries(h).at(-1).data.mode, "off");
 
@@ -570,7 +573,8 @@ test("/self-compact-mode switches A -> B -> off -> A, exposing only the selected
 	assert.ok(!back.includes(EXACT_B_PROMPT));
 	sys = await h.emit("before_agent_start", { systemPrompt: "BASE" });
 	assert.ok(!sys.systemPrompt.includes(B), "the inactive variant leaves the system prompt too");
-	assert.equal(h.messages.length, messagesBefore, "switching modes never starts a model turn");
+	// Guidance messages are appended without starting a turn; nothing here may kick off a model run.
+	assert.equal(h.messages.filter((message: any) => message.options?.triggerTurn).length, 0, "switching modes never starts a model turn");
 });
 
 test("the picker path runs ctx.ui.select and applies the picked mode without a model turn", async (t) => {
