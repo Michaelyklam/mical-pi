@@ -28,7 +28,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "update:browser": "./scripts/update-agent-browser.sh",
     "check:browser": "./scripts/update-agent-browser.sh --check",
-    "test": "npm run test:ask-user && npm run test:live-time && npm run test:effort && npm run test:usage-footer && npm run test:subagents && npm run test:plugin-receiver && npm run test:mcp-health && npm run test:session-aliases && npm run test:workflows && npm run test:zg-search && npm run test:shared && npm run test:patch",
+    "test": "npm run test:ask-user && npm run test:live-time && npm run test:effort && npm run test:usage-footer && npm run test:subagents && npm run test:plugin-receiver && npm run test:mcp-health && npm run test:session-aliases && npm run test:workflows && npm run test:zg-search && npm run test:shared && npm run test:patch && npm run test:self-compact",
     "test:ask-user": "tsx --test \"extensions/ask-user/**/*.test.ts\"",
     "test:live-time": "tsx --test \"extensions/live-time/**/*.test.ts\"",
     "test:effort": "tsx --test \"extensions/effort/**/*.test.ts\"",
@@ -46,7 +46,8 @@
     "bench:zg": "node benchmarks/zg-pi/bench.mjs run",
     "bench:zg:sweqa:setup": "node benchmarks/zg-pi/setup-sweqa-smoke.mjs",
     "bench:zg:sweqa:smoke": "node benchmarks/zg-pi/run-sweqa-smoke.mjs",
-    "bench:zg:sweqa:summary": "node benchmarks/zg-pi/summarize-sweqa.mjs"
+    "bench:zg:sweqa:summary": "node benchmarks/zg-pi/summarize-sweqa.mjs",
+    "test:self-compact": "tsx --test \"extensions/self-compact/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.216",

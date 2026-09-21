@@ -248,6 +248,106 @@ The matching
 [subagents skill](https://github.com/davis7dotsh/my-pi-setup/tree/2657bae/skills/subagents)
 is included unchanged.
 
+### `extensions/self-compact`
+
+Lets a long-running agent manage its own context window. Three thresholds track usage: a notice
+line, a warning line, and a hard cutoff. Crossing the notice or warning line sends the model a
+transient guidance message on the next request without persisting it in the transcript. At the
+hard cutoff every tool except `self_compact` and `view_context` is blocked until the agent
+compacts.
+
+The agent compacts by calling the enabled self-compaction tool (`self_compact` by default, or
+`self_compact_experimental` when the A/B experiment below is enabled) with a `note_to_self`. The
+note is saved, the run
+ends, and Pi compacts once the agent is idle using this extension's compaction prompt. The note is
+returned to the agent byte for byte as the next message, so it resumes from its own `NEXT ACTION`
+without a new user prompt. `view_context` returns the current tokens, percent, level, and resolved
+thresholds as JSON. `/self-compact-now` asks the agent to compact immediately and reuses a saved
+note on retry; `/self-compact-info` prints settings, thresholds, usage, state, and prompt sources
+without an LLM turn.
+
+The TUI footer bar is off by default, because this package also ships `extensions/usage-footer`,
+which owns the footer. Pass `--compact-footer` to replace it with the self-compact context bar for a
+session.
+
+Defaults are fixed token counts derived from a nominal 1,000,000-token baseline, not percentages
+of the active model's window, so the notice and warning lines stay put when the model changes.
+
+| line | tokens | baseline share | flag |
+| --- | --- | --- | --- |
+| notice | 100,000 | 10% | `--compact-soft-at 100000` |
+| warning | 200,000 | 20% | `--compact-at 200000` |
+| hard cutoff | warning + buffer, capped at 90% of the actual window | 30% before the cap | `--compact-buffer 100000` |
+
+The forced line is `min(warning + buffer, 0.9 * contextWindow)`. `openai-codex/gpt-6-astra`
+reports a 272,000-token window, so its thresholds resolve to 100,000 / 200,000 / 244,800. This
+extension cancels Pi's automatic compaction, overflow recovery included, and replaces it with the
+note handoff, so the 90% cap is headroom rather than a safety net: it keeps the forced line at
+least 10% below the window, which leaves room for the note and the summarizer call, but a turn that
+outgrows the window before the agent compacts, a large tool result for example, gets no automatic
+recovery and Pi fails that request. That is the upstream trade: the note is guaranteed to exist
+before the context is discarded. On a window too small for the fixed defaults, defaulted
+fields are clamped down and reported in `/self-compact-info`; an explicit flag that violates the
+ordering or the cap is rejected and leaves the extension inert with every tool blocked. Clamping is
+per field, so setting one flag does not disable clamping for the others.
+
+#### A/B test: `self_compact` (control) vs `self_compact_experimental`
+
+The extension can expose two self-compaction tools that share the entire engine (thresholds, forced
+lock, note handoff, persisted state) and differ only in the prompt the agent sees. Variant A is the
+existing `self_compact` tool and stays the default control. Variant B is
+`self_compact_experimental`, registered only when `--compact-experimental` is passed; its tool
+description, prompt snippet, guidelines, note parameter, and threshold messages use the exact
+wording requested for the experiment:
+
+> if the current context contains many tool calls, compact your own context and turn them into
+> summaries of what our overall goal is, what we are currently working on, and what steps we've been
+> through including summaries of failures and possible next paths. Leave a message for yourself for
+> what to prioritize next.
+
+Tool selection is Pi's, not the extension's. `--tools` is a strict allowlist and `--exclude-tools`
+a denylist, both covering extension tools; the extension reads `pi.getActiveTools()` and targets the
+enabled variant in the system-prompt line, threshold messages, forced-lock errors, and commands.
+When both are enabled the control tool is the canonical name in those messages. When neither is
+enabled the extension is passive: it does not cancel Pi's automatic compaction, never locks tools,
+and sends no guidance, so an exclusion can never leave the agent blocked on a missing tool. The
+read-only `view_context` gauge stays registered, because it changes nothing.
+
+| configuration | command |
+| --- | --- |
+| A only (the default/control) | `pi -e extensions/self-compact/index.ts` |
+| B added (both live) | `pi -e extensions/self-compact/index.ts --compact-experimental` |
+| B only | `pi -e extensions/self-compact/index.ts --compact-experimental --exclude-tools self_compact` |
+| neither (native compaction untouched) | `pi -e extensions/self-compact/index.ts --exclude-tools self_compact,self_compact_experimental` |
+
+`--exclude-tools self_compact_experimental` without `--compact-experimental` is a no-op, because B
+is never registered. `--tools` works too but is a strict allowlist across *all* tools, so the
+cleaner A/B toggle is `--exclude-tools`. `/self-compact-info` reports the active variants, the
+primary tool, and the `--compact-experimental` state; `/self-compact-now` targets the enabled
+variant and refuses when neither is enabled. Variant A keeps reading the vendored,
+user-overridable prompt files under `.pi/self-compact/`; variant B always uses the experimental
+wording, so those overrides only affect A.
+
+Pi subagents are outside the experiment. A child session is built with
+`createAgentSession({ excludeTools: CHILD_EXCLUDED_TOOL_NAMES })` in
+`extensions/subagents/src/backends/pi.ts` and inherits none of the parent's CLI flags, so
+`--compact-experimental` never reaches a child. Every child therefore runs variant A, and B is
+never registered there; `--tools` and `--exclude-tools` are not forwarded either. Per-child variant
+selection is not available today. The only lever in the subagents source is
+`CHILD_EXCLUDED_TOOL_NAMES`, which can turn self-compaction off inside children by excluding
+`self_compact`, but cannot select variant B. Pi's `ExtensionRunner` exposes `getFlagValues()` and
+`setFlagValue()` if that forwarding is ever wired up.
+
+Vendored from
+[disler/self-compact-pi-agent](https://github.com/disler/self-compact-pi-agent/tree/576fe4abda021849f5cde5b6f5796467ffa4bcbd)
+at upstream commit `576fe4a` (MIT, Copyright (c) 2026 IndyDevDan). Local changes: fixed-baseline
+token defaults, per-field clamping, the default prompt files moved to
+`extensions/self-compact/prompts/`, the entry renamed to `index.ts`, the footer bar gated
+behind `--compact-footer`, and the opt-in A/B experimental variant B (`variants.ts`). The upstream sample app,
+verification scripts, and e2e tests are not vendored; that detail and the full change list live in
+[`extensions/self-compact/UPSTREAM.md`](extensions/self-compact/UPSTREAM.md). Tests run with
+`npm run test:self-compact`.
+
 ### `extensions/workflows`
 
 Runs model-authored, multi-phase Pi-agent pipelines through one `workflow` tool. A restricted
