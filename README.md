@@ -109,7 +109,7 @@ upstream profile/claims; API-key and gateway accounts receive user labels at sta
 rotation does not fragment their history.
 
 - Session cost follows the selected Provider Account and includes all incurred branches.
-- Provider-reported cost and Pi-registry estimates remain visibly separate.
+- Provider-reported OpenRouter charges and Pi-registry estimates remain visibly separate in session, local-today and child-agent totals. Historical records without a reported charge remain estimates.
 - Router aliases inherit estimate pricing only from an unambiguous exact canonical model ID.
 - Anthropic usage comes from the selected account's OAuth profile/usage endpoints.
 - Codex usage comes from its account app-server protocol using Pi's selected OAuth token,
@@ -131,9 +131,11 @@ The extension follows Pi's theme and keeps `(+N,-M)` from staged plus unstaged G
 refresh, rename, archive, inspect, and switch Provider Accounts. `/account-label` quickly
 renames the active account.
 
-`codex` is required for account-wide Codex subscription data. `ccusage` is optional and only
+`codex` is required for account-wide Codex subscription data. Discovery checks PATH, then the user's `.local/bin` and `.npm-global/bin`, so a restricted Pi process PATH does not hide an installed CLI. `ccusage` is optional and only
 augments local fallback with matching native Claude/Codex transcripts. Neither `ccstatusline`,
 `jq`, nor the old `ccstatusline-today-vs-budget` helper is required.
+
+OpenRouter charge capture and split-compaction accounting use maintained Pi dependency patches. Restart Pi after applying them; after a global Pi update, run `npm run postinstall` to reapply and `npm run test:patch` to verify. See [`docs/openrouter-cost-tracking.md`](docs/openrouter-cost-tracking.md).
 
 Design and behavior are documented in [`CONTEXT.md`](CONTEXT.md),
 [`docs/usage-footer-ux.md`](docs/usage-footer-ux.md), and

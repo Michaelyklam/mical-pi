@@ -2,6 +2,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { AccountUsageView, LocalUsageSummary, ProviderAccount, SessionCostSummary } from "../domain.ts";
 import { frameMenu } from "./frame.ts";
+import { formatLocalCost, formatUsd as money } from "./format-money.ts";
 
 export interface DashboardEntry {
 	account: ProviderAccount;
@@ -33,7 +34,6 @@ export class DashboardModel {
 
 interface ThemeLike { fg(role: string, text: string): string; bold(text: string): string }
 const formatTokens = (value: number) => value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `${(value / 1_000).toFixed(1)}k` : String(value);
-const money = (value: number) => `$${value.toFixed(2)}`;
 
 function resetText(resetsAt: number | undefined, now = Date.now()): string {
 	if (!resetsAt) return "reset unknown";
@@ -49,7 +49,7 @@ function bar(percent: number): string {
 	return `${"█".repeat(filled)}${"░".repeat(5 - filled)}`;
 }
 
-function detailLines(entry: DashboardEntry, theme: ThemeLike): string[] {
+export function detailLines(entry: DashboardEntry, theme: ThemeLike): string[] {
 	const { account, usage, cost } = entry;
 	const lines = [
 		theme.fg("accent", theme.bold(account.label ?? account.suggestedLabel ?? account.providerId)),
@@ -67,13 +67,14 @@ function detailLines(entry: DashboardEntry, theme: ThemeLike): string[] {
 		lines.push(theme.fg("dim", `        ${resetText(window.resetsAt)}`));
 	}
 	lines.push("", theme.bold("Current session"));
-	lines.push(`Reported cost: ${cost.reported > 0 ? money(cost.reported) : "—"}`);
+	lines.push(`Reported cost: ${cost.hasReportedUsage ? money(cost.reported) : "—"}`);
+	if (cost.hasReportedUsage) lines.push(`Reported by: ${cost.reportedSources.join(", ")} · ${cost.reportedEntries} charges · ${cost.reportedRequestIds.length} request IDs`);
 	const sessionEstimate = cost.estimated > 0 ? `~${money(cost.estimated)}${cost.hasUnpricedUsage ? " · partial" : ""}` : cost.hasUnpricedUsage ? "n/a" : "—";
 	lines.push(`Estimated cost: ${sessionEstimate}`);
 	lines.push(`Pricing: ${cost.pricingSources.length ? cost.pricingSources.join(", ") : "—"}${cost.hasUnpricedUsage ? " · some tokens unpriced" : ""}`);
 	lines.push("", theme.bold(usage.accountTodayTokens !== undefined ? "Account today" : "Local today"));
 	if (usage.accountTodayTokens !== undefined) lines.push(`${formatTokens(usage.accountTodayTokens)} tokens · provider reported`);
-	else if (usage.local) lines.push(`${formatTokens(usage.local.tokens)} tokens · ~${money(usage.local.estimated)} estimated${usage.local.hasUnpricedUsage ? " · partial" : ""}`);
+	else if (usage.local) lines.push(`${formatTokens(usage.local.tokens)} tokens · ${formatLocalCost(usage.local)}`);
 	else lines.push("—");
 	if (usage.accountSpend) lines.push(`Account spend: ${money(usage.accountSpend.amount)} ${usage.accountSpend.currency} · provider reported`);
 	lines.push("", theme.bold("Attribution"), `${cost.attributedEntries} attributed · ${cost.excludedEntries} excluded`);

@@ -1,4 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai";
+import { billingComponents, readReportedCost } from "../shared/billing.ts";
 import type { AccountKey, AttributionRecord, SessionCostSummary } from "./domain.ts";
 import { PricingResolver } from "./pricing.ts";
 
@@ -10,7 +11,8 @@ type EntryLike = {
 	customType?: string;
 	data?: unknown;
 	usage?: Usage;
-	message?: { role?: string; provider?: string; model?: string; usage?: Usage };
+	responseId?: string;
+	message?: { role?: string; provider?: string; model?: string; usage?: Usage; responseId?: string };
 };
 
 export class SessionLedger {
@@ -31,26 +33,35 @@ export class SessionLedger {
 			}
 		}
 
+		let reported = 0;
 		let estimated = 0;
 		let attributedEntries = 0;
 		let excludedEntries = 0;
+		let hasReportedUsage = false;
 		let hasEstimatedUsage = false;
 		let hasUnpricedUsage = false;
+		let reportedEntries = 0;
+		let estimatedEntries = 0;
 		const pricingSources = new Set<string>();
+		const reportedSources = new Set<string>();
+		const reportedRequestIds = new Set<string>();
 
 		for (const entry of entries) {
 			let usage: Usage | undefined;
 			let providerId: string | undefined;
 			let modelId: string | undefined;
+			let requestId: string | undefined;
 			const attribution = attributions.get(entry.id);
 			if (entry.type === "message" && entry.message?.role === "assistant") {
 				usage = entry.message.usage;
 				providerId = entry.message.provider;
 				modelId = entry.message.model;
+				requestId = entry.message.responseId;
 			} else if (entry.type === "compaction" || entry.type === "branch_summary") {
 				usage = entry.usage;
 				providerId = attribution?.providerId;
 				modelId = attribution?.modelId;
+				requestId = entry.responseId;
 			} else if (entry.type === "message" && entry.message?.role === "toolResult" && entry.message.usage) {
 				excludedEntries++;
 				continue;
@@ -68,23 +79,51 @@ export class SessionLedger {
 			}
 			if (key !== account.accountKey) continue;
 			attributedEntries++;
-			hasEstimatedUsage = hasEstimatedUsage || usage.totalTokens > 0;
-			const estimate = this.pricing.estimate(providerId, modelId, usage);
-			if (estimate) {
-				estimated += estimate.amount;
-				pricingSources.add(estimate.pricingSource);
+			// Provider-reported charges take precedence; a reported zero stays zero
+			// and is never replaced by an estimate.
+			const accountUsage = (observationUsage: Usage, observationRequestId: string | undefined): void => {
+				const observation = readReportedCost(observationUsage, observationRequestId);
+				if (observation && observation.currency === "USD") {
+					reported += observation.amount;
+					hasReportedUsage = true;
+					reportedEntries++;
+					reportedSources.add(observation.source);
+					if (observation.requestId) reportedRequestIds.add(observation.requestId);
+					return;
+				}
+				if (observationUsage.totalTokens > 0) hasEstimatedUsage = true;
+				estimatedEntries++;
+				const estimate = this.pricing.estimate(providerId, modelId, observationUsage);
+				if (estimate) {
+					estimated += estimate.amount;
+					pricingSources.add(estimate.pricingSource);
+				}
+				else if (observationUsage.totalTokens > 0) hasUnpricedUsage = true;
+			};
+			// A split compaction merges two summarization calls into one usage;
+			// account each call on its own so a reported call is not replaced by
+			// the combined estimate. The merged estimate is never used as a whole.
+			const parts = billingComponents(usage);
+			if (parts) {
+				for (const part of parts) accountUsage(part as Usage, undefined);
+			} else {
+				accountUsage(usage, requestId);
 			}
-			else if (usage.totalTokens > 0) hasUnpricedUsage = true;
 		}
 
 		return {
-			reported: 0,
+			reported,
 			estimated,
+			hasReportedUsage,
 			hasEstimatedUsage,
 			hasUnpricedUsage,
+			reportedEntries,
+			estimatedEntries,
 			attributedEntries,
 			excludedEntries,
 			pricingSources: [...pricingSources],
+			reportedSources: [...reportedSources],
+			reportedRequestIds: [...reportedRequestIds],
 		};
 	}
 }

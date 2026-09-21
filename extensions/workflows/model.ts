@@ -8,6 +8,7 @@ import {
   truncateHead,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { combineCostDisclosures, estimateFromUsage, readReportedCost, summarizeSessionEntries, type CostDisclosure, type CostEntryLike } from "../shared/billing.ts";
 import { formatContextUtilization } from "../shared/context-utilization.ts";
 import { safeStringify } from "./serialization.ts";
 
@@ -21,7 +22,16 @@ export interface AgentUsage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  /** Best-available total: reported where available, otherwise estimated. */
   cost: number;
+  /** Provider-reported portion of cost, when the child provider reports a charge. */
+  reportedCost: number;
+  /** Locally estimated portion of cost for usage with no reported charge. */
+  estimatedCost: number;
+  /** True when at least one provider-reported charge was seen, even a reported zero. */
+  hasReportedCost: boolean;
+  /** True when at least one entry fell back to a local estimate. */
+  hasEstimatedCost: boolean;
   /** Latest compaction-aware conversation occupancy, not cumulative billing. */
   contextTokens?: number;
   turns: number;
@@ -34,8 +44,94 @@ export function emptyUsage(): AgentUsage {
     cacheRead: 0,
     cacheWrite: 0,
     cost: 0,
+    reportedCost: 0,
+    estimatedCost: 0,
+    hasReportedCost: false,
+    hasEstimatedCost: false,
     turns: 0,
   };
+}
+
+/** Coerce an unknown counter to a finite, non-negative number. */
+function count(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
+}
+
+/**
+ * Rebuild an `AgentUsage` from persisted JSON. Runs written before the
+ * reported/estimated split stored only `.cost`, calculated from Pi's local
+ * pricing; those are surfaced as estimates so the number is not hidden by
+ * absent flags. Missing or malformed counters degrade to zero.
+ */
+export function normalizeAgentUsage(value: unknown): AgentUsage {
+  const usage = emptyUsage();
+  if (!value || typeof value !== "object") return usage;
+  const raw = value as Record<string, unknown>;
+  usage.input = count(raw.input);
+  usage.output = count(raw.output);
+  usage.cacheRead = count(raw.cacheRead);
+  usage.cacheWrite = count(raw.cacheWrite);
+  usage.turns = count(raw.turns);
+  usage.reportedCost = count(raw.reportedCost);
+  usage.estimatedCost = count(raw.estimatedCost);
+  usage.hasReportedCost = raw.hasReportedCost === true;
+  usage.hasEstimatedCost = raw.hasEstimatedCost === true;
+  usage.cost = count(raw.cost);
+  if (typeof raw.contextTokens === "number" && Number.isFinite(raw.contextTokens) && raw.contextTokens >= 0) {
+    usage.contextTokens = raw.contextTokens;
+  }
+  const split = usage.reportedCost + usage.estimatedCost;
+  if (split === 0 && usage.cost > 0) {
+    usage.estimatedCost = usage.cost;
+    usage.hasEstimatedCost = true;
+  } else if (split > 0) {
+    usage.cost = split;
+  }
+  return usage;
+}
+
+/**
+ * Fold one assistant message's usage into a workflow agent total. A
+ * provider-reported charge takes precedence over the local estimate for the
+ * same message; a reported zero stays reported and suppresses the estimate.
+ */
+export function accumulateAgentUsage(
+  usage: AgentUsage,
+  messageUsage: unknown,
+  requestId?: string,
+): void {
+  const reported = readReportedCost(messageUsage, requestId);
+  if (reported && reported.currency === "USD") {
+    usage.reportedCost += reported.amount;
+    usage.hasReportedCost = true;
+  } else {
+    const estimate = estimateFromUsage(messageUsage);
+    if (estimate !== undefined) {
+      usage.estimatedCost += estimate;
+      usage.hasEstimatedCost = true;
+    }
+  }
+  usage.cost = usage.reportedCost + usage.estimatedCost;
+}
+
+/**
+ * Replace the monetary portion of `usage` with transcript totals. Tokens,
+ * turns, and context occupancy stay whatever the caller accumulated from live
+ * context; money is cumulative over the whole transcript, so compaction cannot
+ * erase charges already incurred and compaction summaries still count.
+ */
+export function applySessionCost(
+  usage: AgentUsage,
+  entries: readonly CostEntryLike[],
+): void {
+  const totals = summarizeSessionEntries(entries);
+  usage.reportedCost = totals.reported;
+  usage.estimatedCost = totals.estimated;
+  usage.cost = totals.total;
+  usage.hasReportedCost = totals.hasReportedUsage;
+  usage.hasEstimatedCost = totals.hasEstimatedUsage;
 }
 
 export type AgentState = "running" | "done" | "error";
@@ -141,9 +237,20 @@ export function formatUsage(usage: AgentUsage, model?: string): string {
     parts.push(`${usage.turns} turn${usage.turns > 1 ? "s" : ""}`);
   if (usage.input) parts.push(`${formatTokens(usage.input)} in`);
   if (usage.output) parts.push(`${formatTokens(usage.output)} out`);
-  if (usage.cost) parts.push(`$${usage.cost.toFixed(4)}`);
+  parts.push(...formatCost(usage));
   if (model) parts.push(model);
   return parts.join(" · ");
+}
+
+/** Keep provider-reported and estimated workflow costs visually distinct. */
+function formatCost(usage: AgentUsage): string[] {
+  const reported = count(usage.reportedCost);
+  const estimated = count(usage.estimatedCost);
+  if (usage.hasReportedCost && usage.hasEstimatedCost)
+    return [`$${reported.toFixed(4)} reported`, `~$${estimated.toFixed(4)} est`];
+  if (usage.hasReportedCost) return [`$${reported.toFixed(4)}`];
+  if (usage.hasEstimatedCost) return [`~$${estimated.toFixed(4)}`];
+  return [];
 }
 
 /** Current per-agent context-window utilization, e.g. "7%/372k". */
@@ -166,16 +273,46 @@ export function formatElapsed(startedAt: number, finishedAt?: number): string {
     : `${seconds}s`;
 }
 
+/** Project an `AgentUsage` onto the shared reported/estimated disclosure. */
+export function usageDisclosure(usage: AgentUsage): CostDisclosure {
+  const split = usage.hasReportedCost || usage.hasEstimatedCost;
+  return {
+    ...(split ? { costUsd: usage.reportedCost + usage.estimatedCost } : {}),
+    ...(usage.hasReportedCost ? { reportedCostUsd: usage.reportedCost } : {}),
+    ...(usage.hasEstimatedCost ? { estimatedCostUsd: usage.estimatedCost } : {}),
+  };
+}
+
+/**
+ * Cumulative workflow cost disclosure across every run tracked in a session.
+ * Callers pass the live run map; the result is what the workflow-cost event
+ * reports so listeners can sum it with subagent costs without double counting.
+ */
+export function workflowRunsCost(
+  runs: Iterable<Pick<WorkflowDetails, "agents">>,
+): CostDisclosure {
+  const disclosures: CostDisclosure[] = [];
+  for (const run of runs) {
+    disclosures.push(usageDisclosure(aggregateUsage(run.agents)));
+  }
+  return combineCostDisclosures(disclosures);
+}
+
 export function aggregateUsage(agents: AgentRecord[]): AgentUsage {
   const total = emptyUsage();
   for (const agent of agents) {
-    total.input += agent.usage.input;
-    total.output += agent.usage.output;
-    total.cacheRead += agent.usage.cacheRead;
-    total.cacheWrite += agent.usage.cacheWrite;
-    total.cost += agent.usage.cost;
-    total.turns += agent.usage.turns;
+    const usage = normalizeAgentUsage(agent.usage);
+    total.input += usage.input;
+    total.output += usage.output;
+    total.cacheRead += usage.cacheRead;
+    total.cacheWrite += usage.cacheWrite;
+    total.reportedCost += usage.reportedCost;
+    total.estimatedCost += usage.estimatedCost;
+    total.hasReportedCost ||= usage.hasReportedCost;
+    total.hasEstimatedCost ||= usage.hasEstimatedCost;
+    total.turns += usage.turns;
   }
+  total.cost = total.reportedCost + total.estimatedCost;
   return total;
 }
 

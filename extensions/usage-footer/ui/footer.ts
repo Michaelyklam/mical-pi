@@ -1,6 +1,7 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { HostTelemetrySnapshot } from "../../host-telemetry/monitor.ts";
 import type { AccountUsageView, AllowanceWindow, SessionCostSummary } from "../domain.ts";
+import { formatLocalCost, formatUsd as money } from "./format-money.ts";
 
 export interface FooterViewModel {
 	accountLabel: string;
@@ -9,12 +10,14 @@ export interface FooterViewModel {
 	agentStatuses?: readonly string[];
 	/** Dispatcher-owned child cost, rendered with agent activity. */
 	subagentCostUsd?: number;
+	subagentReportedCostUsd?: number;
+	subagentEstimatedCostUsd?: number;
 	contextTokens?: number;
 	contextWindowTokens?: number;
 	branch?: string | null;
 	git?: { insertions: number; deletions: number };
 	host?: HostTelemetrySnapshot;
-	cost: Pick<SessionCostSummary, "reported" | "estimated" | "hasEstimatedUsage" | "hasUnpricedUsage">;
+	cost: Pick<SessionCostSummary, "reported" | "estimated" | "hasReportedUsage" | "hasEstimatedUsage" | "hasUnpricedUsage">;
 	usage: AccountUsageView;
 }
 
@@ -22,7 +25,6 @@ interface ThemeLike { fg(role: string, text: string): string; bold?: (text: stri
 
 const compact = (count: number, divisor: number, suffix: string): string => `${(count / divisor).toFixed(1).replace(/\.0$/, "")}${suffix}`;
 const tokens = (count: number): string => count >= 1_000_000 ? compact(count, 1_000_000, "M") : count >= 1_000 ? compact(count, 1_000, "k") : String(count);
-const money = (amount: number): string => `$${amount.toFixed(2)}`;
 
 /** Time until the window resets, e.g. "3d 4h", "2h 15m", "40m". Falls back to the window label when no reset time is known. */
 export function resetLabel(window: AllowanceWindow, now: number): string {
@@ -44,23 +46,39 @@ function progress(window: AllowanceWindow, theme: ThemeLike, now: number): strin
 	return theme.fg(role, `${resetLabel(window, now)} ${bar} ${Math.round(window.usedPercent)}%`);
 }
 
-function usageText(usage: AccountUsageView, theme: ThemeLike, now: number, oneWindow = false): string {
+function usageText(usage: AccountUsageView, theme: ThemeLike, now: number): string {
 	if (usage.status === "local" && usage.local) {
-		const estimate = usage.local.hasUnpricedUsage && usage.local.estimated === 0 ? "est n/a" : `${money(usage.local.estimated)} est`;
-		return `Usage (local today): ${tokens(usage.local.tokens)} tok · ~${estimate}`;
+		return `Usage (local today): ${tokens(usage.local.tokens)} tok · ${formatLocalCost(usage.local)}`;
 	}
 	if (usage.status === "loading") return theme.fg("dim", "Usage: loading…");
 	if (usage.status === "unavailable") return theme.fg("dim", "Usage: unavailable");
-	let windows = usage.windows;
-	if (oneWindow && windows.length > 1) windows = [[...windows].sort((a, b) => b.usedPercent - a.usedPercent)[0]!];
-	const content = windows.map((window) => progress(window, theme, now)).join(theme.fg("dim", " · "));
+	const content = usage.windows.map((window) => progress(window, theme, now)).join(theme.fg("dim", " · "));
 	const stale = usage.status === "stale" ? theme.fg("dim", " (stale)") : "";
 	return content ? `Usage: ${content}${stale}` : theme.fg("dim", "Usage: unavailable");
 }
 
+function usageRows(usage: AccountUsageView, width: number, theme: ThemeLike, now: number): string[] {
+	if ((usage.status !== "live" && usage.status !== "stale") || !usage.windows.length) {
+		return [truncateToWidth(usageText(usage, theme, now), width, "…")];
+	}
+	const prefix = usage.status === "stale" ? "Usage (stale): " : "Usage: ";
+	const rows: string[] = [];
+	let row = "";
+	for (const window of usage.windows) {
+		const item = progress(window, theme, now);
+		const candidate = row ? `${row}${theme.fg("dim", " · ")}${item}` : `${prefix}${item}`;
+		if (row && visibleWidth(candidate) > width) {
+			rows.push(truncateToWidth(row, width, "…"));
+			row = `${prefix}${item}`;
+		} else row = candidate;
+	}
+	if (row) rows.push(truncateToWidth(row, width, "…"));
+	return rows;
+}
+
 function costText(cost: FooterViewModel["cost"], theme: ThemeLike): string {
 	const parts: string[] = [];
-	if (cost.reported > 0) parts.push(`Cost: ${money(cost.reported)}`);
+	if (cost.hasReportedUsage || cost.reported > 0) parts.push(`Cost: ${money(cost.reported)}`);
 	if (cost.estimated > 0) parts.push(theme.fg("dim", `Est: ~${money(cost.estimated)}`));
 	else if (cost.hasEstimatedUsage && cost.hasUnpricedUsage) parts.push(theme.fg("dim", "Est: n/a"));
 	return parts.join(theme.fg("dim", " + "));
@@ -75,25 +93,23 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const statuses = view.statuses?.join(theme.fg("dim", " · ")) ?? "";
 	const agentStatuses = view.agentStatuses?.join(theme.fg("dim", " · ")) ?? "";
 	const cost = costText(view.cost, theme);
-	const subagentCost = view.subagentCostUsd === undefined
-		? ""
-		: theme.fg("dim", `[${money(view.subagentCostUsd)}]`);
+	const childParts: string[] = [];
+	if (view.subagentReportedCostUsd !== undefined) childParts.push(`Cost: ${money(view.subagentReportedCostUsd)}`);
+	if (view.subagentEstimatedCostUsd !== undefined) childParts.push(`Est: ~${money(view.subagentEstimatedCostUsd)}`);
+	if (!childParts.length && view.subagentCostUsd !== undefined) childParts.push(`Est: ~${money(view.subagentCostUsd)}`);
+	const subagentCost = childParts.length ? theme.fg("dim", `[${childParts.join(" + ")}]`) : "";
 	const usage = usageText(view.usage, theme, now);
-	const compactUsage = usageText(view.usage, theme, now, true);
 
 	let line1 = joined([accountIdentity, statuses, cost, usage], theme);
-	const reductions = [
-		[accountIdentity, statuses, usage],
-		[accountIdentity, statuses, compactUsage],
-		[accountIdentity, statuses],
-		[accountIdentity],
-	];
-	for (const reduced of reductions) {
-		if (visibleWidth(line1) <= width) break;
-		line1 = joined(reduced, theme);
-	}
+	let extraUsageRows: string[] = [];
+	if (visibleWidth(line1) > width) line1 = joined([accountIdentity, statuses, usage], theme);
 	if (visibleWidth(line1) > width) {
-		line1 = theme.fg("accent", truncateToWidth(view.accountLabel, width, "…"));
+		// Subscription windows must remain visible in split panes. Move usage
+		// onto its own rows instead of dropping windows or the reset countdown.
+		extraUsageRows = usageRows(view.usage, width, theme, now);
+		line1 = joined([accountIdentity, statuses, cost], theme);
+		if (visibleWidth(line1) > width) line1 = joined([accountIdentity, statuses], theme);
+		if (visibleWidth(line1) > width) line1 = accountIdentity;
 	}
 	line1 = truncateToWidth(line1, width, "…");
 
@@ -118,5 +134,5 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const line2 = truncateToWidth(joined(metadata, theme), width, "…");
 
 	const agentLine = truncateToWidth([agentStatuses, subagentCost].filter(Boolean).join(" "), width, "…");
-	return agentLine ? [line1, agentLine, line2] : [line1, line2];
+	return [line1, ...extraUsageRows, ...(agentLine ? [agentLine] : []), line2];
 }

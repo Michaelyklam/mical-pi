@@ -764,7 +764,7 @@ const makeCodexSession = (
             state.meta = { ...state.meta, contextWindow };
             emit({ _tag: "MetaChanged", meta: { contextWindow } });
           }
-          emit({ _tag: "UsageChanged", tokens, contextWindow, costUsd });
+          emit({ _tag: "UsageChanged", tokens, contextWindow, costUsd, estimatedCostUsd: costUsd });
           break;
         }
         case "error": {

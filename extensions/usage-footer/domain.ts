@@ -68,16 +68,30 @@ export interface CostEstimate {
 export interface SessionCostSummary {
 	reported: number;
 	estimated: number;
+	/** True when at least one provider-reported charge was seen, even a reported zero. */
+	hasReportedUsage: boolean;
 	hasEstimatedUsage: boolean;
 	hasUnpricedUsage: boolean;
+	reportedEntries: number;
+	estimatedEntries: number;
 	attributedEntries: number;
 	excludedEntries: number;
 	pricingSources: string[];
+	/** Provenance of reported charges, e.g. ["openrouter"]. */
+	reportedSources: string[];
+	/** Provider request ids paired with reported charges, when exposed. */
+	reportedRequestIds: string[];
 }
 
 export interface LocalUsageSummary {
 	tokens: number;
 	estimated: number;
+	/** Provider-reported charges included in this local summary, in USD. */
+	reported?: number;
+	/** True when at least one record carried a provider-reported charge. */
+	hasReportedUsage?: boolean;
+	/** True when at least one record or native ccusage entry fell back to an estimate. */
+	hasEstimatedUsage?: boolean;
 	hasUnpricedUsage: boolean;
 	models: number;
 }

@@ -29,7 +29,7 @@ Usage reported by the provider account's upstream service, including activity fr
 _Avoid_: Local usage, session cost
 
 **Local Usage**:
-Usage reconstructed from transcripts available on this host for one provider account. It is an explicitly incomplete fallback when account-wide usage is unavailable and is displayed as today's tokens plus an explicitly estimated API-equivalent cost.
+Usage reconstructed from transcripts available on this host for one provider account. It is an explicitly incomplete fallback when account-wide usage is unavailable, with provider-reported charges and estimated costs distinguished for the locally observed requests.
 _Avoid_: Account-wide usage
 
 **Allowance Window**:

@@ -87,7 +87,13 @@ interface MutableSnapshot {
   settledAt?: number;
   errorText?: string;
   meta: SubagentMeta;
-  usage: { tokens?: number; contextWindow?: number; costUsd?: number };
+  usage: {
+    tokens?: number;
+    contextWindow?: number;
+    costUsd?: number;
+    reportedCostUsd?: number;
+    estimatedCostUsd?: number;
+  };
   transcript: TranscriptItem[];
   liveAssistant?: { text: string; thinking: string };
   liveTools: LiveToolState[];
@@ -426,6 +432,8 @@ const makeManager = Effect.gen(function* () {
           tokens: event.tokens ?? s.usage.tokens,
           contextWindow: event.contextWindow ?? s.usage.contextWindow,
           costUsd: event.costUsd ?? s.usage.costUsd,
+          reportedCostUsd: event.reportedCostUsd ?? s.usage.reportedCostUsd,
+          estimatedCostUsd: event.estimatedCostUsd ?? s.usage.estimatedCostUsd,
         };
         break;
       case "MetaChanged":

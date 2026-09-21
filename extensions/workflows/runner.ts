@@ -30,8 +30,9 @@ import {
   createChildResources,
   shutdownAndDisposeChildSession,
 } from "../shared/child-session.ts";
+import type { CostEntryLike } from "../shared/billing.ts";
 import { createToolCallTimeoutGuard } from "../shared/tool-call-timeout.ts";
-import { emptyUsage, type AgentUsage, type TranscriptEntry } from "./model.ts";
+import { emptyUsage, applySessionCost, type AgentUsage, type TranscriptEntry } from "./model.ts";
 import {
   buildWorkflowAgentPrompt,
   STRUCTURED_OUTPUT_SYSTEM_INSTRUCTION,
@@ -350,7 +351,10 @@ export function transcriptFromMessages(
   return bounded;
 }
 
-function computeUsage(messages: AgentMessage[]): AgentUsage {
+function computeUsage(
+  messages: AgentMessage[],
+  entries: readonly CostEntryLike[],
+): AgentUsage {
   const usage = emptyUsage();
   for (const msg of messages) {
     if (msg.role !== "assistant") continue;
@@ -361,8 +365,11 @@ function computeUsage(messages: AgentMessage[]): AgentUsage {
     usage.output += u.output || 0;
     usage.cacheRead += u.cacheRead || 0;
     usage.cacheWrite += u.cacheWrite || 0;
-    usage.cost += u.cost?.total || 0;
   }
+  // Money is cumulative over the full transcript, not the live context:
+  // compaction moves messages out of `messages`, and compaction charges live
+  // only in summary entries. Tokens and turns stay context telemetry.
+  applySessionCost(usage, entries);
   return usage;
 }
 
@@ -483,7 +490,7 @@ export async function runAgent(
 
   const sync = () => {
     const messages = childSession.messages;
-    usage = computeUsage(messages);
+    usage = computeUsage(messages, childSession.sessionManager.getEntries());
 
     const sessionModel = childSession.model;
     modelId = sessionModel?.id ?? modelId;

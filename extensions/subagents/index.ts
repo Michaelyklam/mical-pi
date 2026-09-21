@@ -44,6 +44,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { combineSubagentCosts } from "./src/billing.ts";
+import { SUBAGENT_COST_EVENT } from "../shared/billing.ts";
 import {
   cloneBtwParentMessages,
   deriveBtwTitle,
@@ -181,13 +183,8 @@ export default function (pi: ExtensionAPI) {
     const subs = manager.view.list();
     const running = subs.filter((snap) => snap.status === "running").length;
     pi.events.emit(HOST_AGENT_COUNT_EVENT, { source: "subagents", count: running });
-    const knownCosts = subs
-      .map((snap) => snap.usage.costUsd)
-      .filter((cost): cost is number => cost !== undefined);
-    const costUsd = knownCosts.length > 0
-      ? knownCosts.reduce((total, cost) => total + cost, 0)
-      : undefined;
-    pi.events.emit("mical:subagent-cost", { costUsd });
+    const costView = combineSubagentCosts(subs.map((snap) => snap.usage));
+    pi.events.emit(SUBAGENT_COST_EVENT, costView);
     if (!ui) return;
     if (subs.length === 0) {
       ui.setStatus("subagents", undefined);
@@ -289,7 +286,7 @@ export default function (pi: ExtensionAPI) {
     unsubStatus = undefined;
     ui?.setStatus("subagents", undefined);
     pi.events.emit(HOST_AGENT_COUNT_EVENT, { source: "subagents", count: 0 });
-    pi.events.emit("mical:subagent-cost", { costUsd: undefined });
+    pi.events.emit(SUBAGENT_COST_EVENT, combineSubagentCosts([]));
     ui = undefined;
     const closing = runtime;
     runtime = undefined;

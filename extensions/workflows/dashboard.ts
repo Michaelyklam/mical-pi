@@ -32,6 +32,7 @@ import {
   formatElapsed,
   formatUsage,
   aggregateUsage,
+  normalizeAgentUsage,
   phaseGroups,
   resultJson,
   shortenHome,
@@ -94,7 +95,7 @@ function normalizeTranscript(value: unknown): TranscriptEntry[] {
 }
 
 /** Leniently normalize a workflow.json (including runs from older tooling). */
-function normalizeDetails(
+export function normalizeDetails(
   runId: string,
   raw: unknown,
 ): WorkflowDetails | undefined {
@@ -134,15 +135,7 @@ function normalizeDetails(
           ? a.error
           : undefined,
       preview: typeof a.preview === "string" ? a.preview : "",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        cost: 0,
-        turns: 0,
-        ...(a.usage && typeof a.usage === "object" ? (a.usage as object) : {}),
-      },
+      usage: normalizeAgentUsage(a.usage),
       transcript: normalizeTranscript(a.transcript),
     });
   }

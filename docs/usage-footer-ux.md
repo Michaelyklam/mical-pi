@@ -2,7 +2,7 @@
 
 ## Footer
 
-The footer has two base rows and adds a dedicated child-agent row whenever subagent/workflow activity or child cost is present. It follows Pi's active theme rather than using the legacy hard-coded ccstatusline ANSI palette.
+The footer has two base rows, adds usage rows when allowance windows do not fit beside account information, and adds a dedicated child-agent row whenever subagent/workflow activity or child cost is present. It follows Pi's active theme rather than using the legacy hard-coded ccstatusline ANSI palette.
 
 ```text
 Model: openai-codex/gpt-5.6-sol · personal | Est: ~$0.33 | Usage: 5h ██░░░ 43% · 7d █░░░░ 18%
@@ -21,13 +21,13 @@ openai-codex/… · personal
 
 ### Cost states
 
-Hide zero-valued session cost. Provider-reported and estimated amounts remain visually distinct:
+Show an explicitly reported zero as `Cost: $0.00`; absent cost is not a free request. Hide zero-valued estimates. Provider-reported and estimated amounts remain visually distinct:
 
 ```text
 Cost: $3.20 + Est: ~$0.80
 ```
 
-Reported cost uses normal text. Estimates are dim and carry `~`. If attributable usage exists but no current pricing source is available, show `Est: n/a`.
+Reported cost uses normal text. Estimates are dim and carry `~`. Sub-cent amounts retain extra decimal places instead of displaying as zero. If attributable usage exists but no current pricing source is available, show `Est: n/a`. Child-agent totals use the same reported/estimated split. The account dashboard shows reported-cost provenance and the number of associated request IDs.
 
 ### Usage states
 
@@ -51,7 +51,9 @@ After 30 minutes, use the explicitly local fallback:
 Usage (local today): 8.4M tok · ~$12.30 est
 ```
 
-The local label alone communicates degraded scope; endpoint errors stay in `/usage`.
+The local label communicates degraded scope; endpoint errors stay in `/usage`. Local-today totals use reported per-request charges where preserved in transcripts and estimate only the remaining usage. They are still local totals, not account-wide spend.
+
+Codex usage requires its CLI, resolved from the process PATH with fallback to the user's `.local/bin` and `.npm-global/bin` installations. This supports Pi launched with a restricted PATH outside an interactive shell.
 
 ### Host telemetry
 
@@ -61,7 +63,7 @@ The metadata row samples host CPU and RAM once per second on Linux and macOS. Wh
 
 ### Responsive priority
 
-Preserve account/model identity and Usage longest. Subagent/workflow activity truncates independently on its dedicated row and cannot consume model-row capacity. The metadata row always uses this order: context, branch, diff, agents, CPU, RAM, GPU. As width shrinks it removes fields from right to left, leaving context until last. If only one allowance window fits, show the most utilized window.
+Preserve account identity and every allowance window. When usage does not fit beside account information, move it to dedicated rows and wrap between windows. Each window keeps its bar, percentage and reset countdown; only terminals too narrow for a single window require truncation. Show remaining days/hours/minutes when a reset timestamp is available, otherwise the provider's window label. Subagent/workflow activity truncates independently on its dedicated row. The metadata row always uses this order: context, branch, diff, agents, CPU, RAM, GPU. As width shrinks it removes fields from right to left, leaving context until last.
 
 ## Account labels
 

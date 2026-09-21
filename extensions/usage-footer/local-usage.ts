@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { AccountCatalog } from "./account-catalog.ts";
 import type { AttributionRecord, LocalUsageSummary, ProviderAccount } from "./domain.ts";
+import { readReportedCost } from "../shared/billing.ts";
 import { withFileLock, writeJsonAtomic } from "./persistence.ts";
 import { PricingResolver } from "./pricing.ts";
 import { ATTRIBUTION_ENTRY } from "./session-ledger.ts";
@@ -110,7 +111,10 @@ export class LocalUsageIndex {
 		await this.loadCache();
 		const date = this.localDate();
 		let tokens = 0;
+		let reported = 0;
 		let estimated = 0;
+		let hasReportedUsage = false;
+		let hasEstimatedUsage = false;
 		let hasUnpricedUsage = false;
 		const models = new Set<string>();
 
@@ -121,9 +125,19 @@ export class LocalUsageIndex {
 				if (key !== account.accountKey) continue;
 				tokens += record.usage.totalTokens;
 				models.add(`${record.providerId}/${record.modelId}`);
+				// A provider-reported charge supersedes the local estimate for the same
+				// record, so a record is counted once, never both ways.
+				const providerReport = readReportedCost(record.usage);
+				if (providerReport && providerReport.currency === "USD") {
+					reported += providerReport.amount;
+					hasReportedUsage = true;
+					continue;
+				}
 				const estimate = this.pricing.estimate(record.providerId, record.modelId, record.usage);
-				if (estimate) estimated += estimate.amount;
-				else if (record.usage.totalTokens > 0) hasUnpricedUsage = true;
+				if (estimate) {
+					estimated += estimate.amount;
+					hasEstimatedUsage = true;
+				} else if (record.usage.totalTokens > 0) hasUnpricedUsage = true;
 			}
 		}
 		await this.saveCache();
@@ -139,13 +153,17 @@ export class LocalUsageIndex {
 						const usage = emptyUsage(breakdown.inputTokens ?? 0, breakdown.outputTokens ?? 0, breakdown.cacheReadTokens ?? 0, breakdown.cacheCreationTokens ?? 0);
 						tokens += usage.totalTokens;
 						models.add(`${account.providerId}/${breakdown.modelName}`);
+						// Native ccusage is an external local estimate; it never reports a
+						// provider charge.
 						const estimate = this.pricing.estimate(account.providerId, breakdown.modelName, usage);
-						if (estimate) estimated += estimate.amount;
-						else if (usage.totalTokens > 0) hasUnpricedUsage = true;
+						if (estimate) {
+							estimated += estimate.amount;
+							hasEstimatedUsage = true;
+						} else if (usage.totalTokens > 0) hasUnpricedUsage = true;
 					}
 				}
 			} catch { /* Local native usage is optional. */ }
 		}
-		return { tokens, estimated, hasUnpricedUsage, models: models.size };
+		return { tokens, estimated, reported, hasReportedUsage, hasEstimatedUsage, hasUnpricedUsage, models: models.size };
 	}
 }

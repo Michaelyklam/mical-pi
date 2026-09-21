@@ -184,8 +184,12 @@ export type SubagentEvent =
       readonly _tag: "UsageChanged";
       readonly tokens?: number;
       readonly contextWindow?: number;
-      /** Cumulative cost for this child session, in USD. */
+      /** Cumulative cost for this child session, in USD (reported where available). */
       readonly costUsd?: number;
+      /** Provider-reported portion of costUsd, when the backend reports a charge. */
+      readonly reportedCostUsd?: number;
+      /** Locally estimated portion of costUsd for usage with no reported charge. */
+      readonly estimatedCostUsd?: number;
     }
   | { readonly _tag: "MetaChanged"; readonly meta: Partial<SubagentMeta> }
   /** Non-fatal diagnostics. Fatal failures arrive as a RunSettled outcome. */
@@ -212,8 +216,12 @@ export interface SubagentSnapshot {
   readonly usage: {
     readonly tokens?: number;
     readonly contextWindow?: number;
-    /** Cumulative cost for this child session, in USD. */
+    /** Cumulative cost for this child session, in USD (reported where available). */
     readonly costUsd?: number;
+    /** Provider-reported portion of costUsd, when the backend reports a charge. */
+    readonly reportedCostUsd?: number;
+    /** Locally estimated portion of costUsd for usage with no reported charge. */
+    readonly estimatedCostUsd?: number;
   };
   readonly transcript: ReadonlyArray<TranscriptItem>;
   /** Streaming assistant buffers, cleared when the finalized message lands. */

@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants, statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { AllowanceWindow, ProviderUsageSnapshot } from "../domain.ts";
 
@@ -108,15 +109,32 @@ class RpcClient {
 	}
 }
 
+/** Pi launched outside an interactive shell may not inherit user bin directories. */
+export function resolveCodexCommand(pathEnv = process.env.PATH ?? "", home = homedir()): string {
+	const directories = [
+		...pathEnv.split(delimiter).filter(Boolean),
+		join(home, ".local", "bin"),
+		join(home, ".npm-global", "bin"),
+	];
+	for (const directory of directories) {
+		const candidate = resolve(directory, "codex");
+		try {
+			accessSync(candidate, constants.X_OK);
+			if (statSync(candidate).isFile()) return candidate;
+		} catch { /* Try the next installation location. */ }
+	}
+	return "codex";
+}
+
 export class CodexUsageAdapter {
-	constructor(private readonly command = "codex") {}
+	constructor(private readonly command?: string) {}
 
 	async fetch(input: { accessToken: string; accountId: string; planType?: string; localDate: string; signal?: AbortSignal }): Promise<{
 		profile: { stableIdentity: string; suggestedLabel?: string };
 		usage: ProviderUsageSnapshot;
 	}> {
 		const home = await mkdtemp(join(tmpdir(), "mical-pi-codex-"));
-		const rpc = new RpcClient(this.command, home);
+		const rpc = new RpcClient(this.command ?? resolveCodexCommand(), home);
 		try {
 			await rpc.request("initialize", { clientInfo: { name: "mical-pi", version: "1" }, capabilities: { experimentalApi: true } }, input.signal);
 			await rpc.request(

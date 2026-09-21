@@ -463,6 +463,10 @@ const makeClaudeSession = (
       // contextOccupancyTokens); only the capacity is trustworthy here. The
       // occupancy itself was already emitted by the last assistant message.
       const contextWindow = resultContextWindow(result);
+      // `total_cost_usd` is the Claude Agent SDK's own price-table
+      // computation, not an observation of what Anthropic billed the account,
+      // so it belongs in the estimated bucket. See
+      // docs/adr/0002-separate-reported-and-estimated-cost.md.
       if (Number.isFinite(result.total_cost_usd) && result.total_cost_usd >= 0) {
         state.costUsd += result.total_cost_usd;
       }
@@ -470,6 +474,7 @@ const makeClaudeSession = (
         _tag: "UsageChanged",
         contextWindow: contextWindow ?? state.meta.contextWindow,
         costUsd: state.costUsd,
+        estimatedCostUsd: state.costUsd,
       });
       if (
         contextWindow !== undefined &&

@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { HOST_TELEMETRY_EVENT } from "../host-telemetry/index.ts";
 import type { HostTelemetrySnapshot } from "../host-telemetry/monitor.ts";
 import { FAST_MODE_STATUS_KEY } from "../shared/fast-mode-status.ts";
+import { ChildCostTracker } from "./child-costs.ts";
+import { SUBAGENT_COST_EVENT, WORKFLOW_COST_EVENT } from "../shared/billing.ts";
 import { AccountCatalog } from "./account-catalog.ts";
 import { AccountDiscovery, nativeIdentityMatches, openAIIdentity } from "./account-discovery.ts";
 import { AnthropicUsageAdapter } from "./adapters/anthropic.ts";
@@ -51,17 +53,18 @@ export default function usageFooter(pi: ExtensionAPI) {
 	let currentAccount: ProviderAccount | undefined;
 	let enabled = false;
 	let requestRender: (() => void) | undefined;
-	let subagentCostUsd: number | undefined;
+	const childCosts = new ChildCostTracker();
 	let hostTelemetry: HostTelemetrySnapshot | undefined;
 	let git: GitChanges | undefined;
 	let gitTimer: NodeJS.Timeout | undefined;
 	const snapshotStore = new JsonSnapshotStore(SNAPSHOT_FILE);
 
-	pi.events.on("mical:subagent-cost", (data) => {
-		const cost = (data as { costUsd?: unknown }).costUsd;
-		subagentCostUsd = typeof cost === "number" && Number.isFinite(cost) ? cost : undefined;
-		requestRender?.();
-	});
+	for (const source of [SUBAGENT_COST_EVENT, WORKFLOW_COST_EVENT]) {
+		pi.events.on(source, (data) => {
+			childCosts.update(source, data);
+			requestRender?.();
+		});
+	}
 
 	pi.events.on(HOST_TELEMETRY_EVENT, (data) => {
 		hostTelemetry = data as HostTelemetrySnapshot;
@@ -153,6 +156,7 @@ export default function usageFooter(pi: ExtensionAPI) {
 					const entries = ctx.sessionManager.getEntries();
 					const cost = ledger(ctx).summarize(entries as any[], account);
 					const extensionStatuses = footerData.getExtensionStatuses();
+					const childCost = childCosts.total;
 					const agentStatusKeys = new Set(["subagents", "workflows"]);
 					return renderFooterLines({
 						accountLabel: account.label ?? account.suggestedLabel ?? account.providerId,
@@ -162,7 +166,9 @@ export default function usageFooter(pi: ExtensionAPI) {
 						agentStatuses: [...extensionStatuses]
 							.filter(([key]) => agentStatusKeys.has(key))
 							.map(([, value]) => value),
-						subagentCostUsd,
+						subagentCostUsd: childCost.costUsd,
+						subagentReportedCostUsd: childCost.reportedCostUsd,
+						subagentEstimatedCostUsd: childCost.estimatedCostUsd,
 						contextTokens: ctx.getContextUsage()?.tokens ?? undefined,
 						contextWindowTokens: model.contextWindow,
 						branch: footerData.getGitBranch(),
@@ -202,6 +208,7 @@ export default function usageFooter(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (event, ctx) => {
+		childCosts.clear();
 		discovery = new AccountDiscovery(ctx.modelRegistry, anthropic);
 		if (ctx.mode === "tui") await discoverAll(ctx, event.reason === "startup");
 		else await catalog.load();

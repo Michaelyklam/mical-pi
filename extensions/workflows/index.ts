@@ -35,6 +35,7 @@ import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { HOST_AGENT_COUNT_EVENT } from "../host-telemetry/index.ts";
 import { formatActivityStatus } from "../shared/activity-status.ts";
+import { WORKFLOW_COST_EVENT } from "../shared/billing.ts";
 import { createWorkflowPersistence, persistWorkflowJson } from "./artifacts.ts";
 import { RunController } from "./controller.ts";
 import { sessionWorkflowRunIds, showWorkflowDashboard } from "./dashboard.ts";
@@ -55,6 +56,7 @@ import {
   stateSquare,
   statusColor,
   statusWord,
+  workflowRunsCost,
   SQUARE,
   type AgentRecord,
   type WorkflowDetails,
@@ -256,6 +258,16 @@ export default function workflows(pi: ExtensionAPI) {
       [...activeRuns].map(([runId, run]) => [runId, run.details] as const),
     );
 
+  /**
+   * Every run tracked this session, including settled ones, so the reported
+   * workflow cost is cumulative across runs and phases. Cleared on session
+   * shutdown, when the last `mical:workflow-cost` event reports no cost.
+   */
+  const trackedRuns = new Map<string, WorkflowDetails>();
+  const publishWorkflowCost = () => {
+    pi.events.emit(WORKFLOW_COST_EVENT, workflowRunsCost(trackedRuns.values()));
+  };
+
   /** Finished counts remain visible until the dashboard acknowledges them. */
   let lastUi: ExtensionContext["ui"] | undefined;
   let completedRuns = 0;
@@ -327,6 +339,8 @@ export default function workflows(pi: ExtensionAPI) {
       if (timer) clearTimeout(timer);
     }
     lastUi?.setStatus("workflows", undefined);
+    trackedRuns.clear();
+    publishWorkflowCost();
     activeAgentCalls = 0;
     publishActiveAgentCount();
     lastUi = undefined;
@@ -602,6 +616,7 @@ export default function workflows(pi: ExtensionAPI) {
                 record.contextWindow =
                   progress.contextWindow ?? record.contextWindow;
                 record.transcript = progress.transcript;
+                publishWorkflowCost();
                 emit();
               },
             });
@@ -622,6 +637,7 @@ export default function workflows(pi: ExtensionAPI) {
             } else {
               record.error = outcome.error ?? "Agent failed";
             }
+            publishWorkflowCost();
             emit();
 
             return {
@@ -690,6 +706,8 @@ export default function workflows(pi: ExtensionAPI) {
         completion?: Promise<void>;
       };
       activeRuns.set(runId, activeRun);
+      trackedRuns.set(runId, details);
+      publishWorkflowCost();
       const completion = runScript();
       activeRun.completion = completion;
       if (ctx.hasUI) lastUi = ctx.ui;

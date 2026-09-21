@@ -171,6 +171,7 @@ const makeStubSession = (
           tokens: Math.min(profile.contextWindow, 2400 * (turn + 1)),
           contextWindow: profile.contextWindow,
           costUsd: 0.01 * (turn + 1),
+          estimatedCostUsd: 0.01 * (turn + 1),
         });
 
         if (failing) {
@@ -204,6 +205,7 @@ const makeStubSession = (
             Math.min(profile.contextWindow, 2400 * (turn + 1) + 900),
           contextWindow: profile.contextWindow,
           costUsd: 0.015 * (turn + 1),
+          estimatedCostUsd: 0.015 * (turn + 1),
         });
         yield* emit({
           _tag: "RunSettled",

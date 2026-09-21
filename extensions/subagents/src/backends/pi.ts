@@ -35,6 +35,7 @@ import type {
 } from "../domain.ts";
 import { CompactError, SendError, SpawnError } from "../domain.ts";
 import { piModelProviderViolation } from "../provider-policy.ts";
+import { summarizeSessionEntries } from "../../../shared/billing.ts";
 import { createToolCallTimeoutGuard } from "../../../shared/tool-call-timeout.ts";
 
 const CHILD_SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -393,11 +394,16 @@ const makePiSession = (
 
     const emitUsage = () => {
       const usage = session.getContextUsage();
+      // A pi child session may mix provider-reported charges (OpenRouter) with
+      // locally estimated ones; keep them separate and let costUsd be the total.
+      const cost = summarizeSessionEntries(session.sessionManager.getEntries());
       emit({
         _tag: "UsageChanged",
         tokens: usage?.tokens ?? undefined,
         contextWindow: activeModel()?.contextWindow ?? usage?.contextWindow,
-        costUsd: session.getSessionStats().cost,
+        costUsd: cost.total,
+        reportedCostUsd: cost.hasReportedUsage ? cost.reported : undefined,
+        estimatedCostUsd: cost.hasEstimatedUsage ? cost.estimated : undefined,
       });
     };
 

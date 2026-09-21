@@ -72,6 +72,71 @@ test("Session Ledger scopes all incurred branches to the selected account and ex
 	assert.equal(result.excludedEntries, 1);
 });
 
+test("Session Ledger keeps provider-reported charges separate and suppresses the estimate for that entry", () => {
+	const resolver = new PricingResolver([model("openrouter", "openai/gpt", { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })]);
+	const reportedUsage = { ...usage(1_000_000, 0), reportedCost: { amount: 0.42, currency: "USD", source: "openrouter" } };
+	const entries = [
+		{ type: "message", id: "a", message: { role: "assistant", provider: "openrouter", model: "openai/gpt", responseId: "gen-1", usage: reportedUsage } },
+		{ type: "message", id: "b", message: { role: "assistant", provider: "openrouter", model: "openai/gpt", usage: usage(500_000, 0) } },
+	];
+	const result = new SessionLedger(resolver, (provider) => provider === "openrouter" ? "openrouter:main" : undefined).summarize(entries, { accountKey: "openrouter:main", providerId: "openrouter" });
+	// Entry a is reported (estimate 1.0 ignored); entry b has no report, so it estimates to 0.5.
+	assert.equal(result.reported, 0.42);
+	assert.equal(result.estimated, 0.5);
+	assert.equal(result.hasReportedUsage, true);
+	assert.equal(result.hasEstimatedUsage, true);
+	assert.equal(result.reportedEntries, 1);
+	assert.deepEqual(result.reportedRequestIds, ["gen-1"]);
+	assert.deepEqual(result.reportedSources, ["openrouter"]);
+});
+
+test("Session Ledger treats a provider-reported zero as authoritative, not missing", () => {
+	const resolver = new PricingResolver([model("openrouter", "openai/gpt", { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })]);
+	const entries = [
+		{ type: "message", id: "free", message: { role: "assistant", provider: "openrouter", model: "openai/gpt", responseId: "gen-free", usage: { ...usage(1_000_000, 0), reportedCost: { amount: 0, currency: "USD", source: "openrouter" } } } },
+	];
+	const result = new SessionLedger(resolver, (provider) => provider === "openrouter" ? "openrouter:main" : undefined).summarize(entries, { accountKey: "openrouter:main", providerId: "openrouter" });
+	assert.equal(result.reported, 0);
+	assert.equal(result.estimated, 0);
+	assert.equal(result.hasReportedUsage, true);
+	assert.equal(result.hasEstimatedUsage, false);
+});
+
+test("Session Ledger falls back to an estimate when no reported charge exists (resumed/legacy entries)", () => {
+	const resolver = new PricingResolver([model("openrouter", "openai/gpt", { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })]);
+	const entries = [
+		{ type: "message", id: "legacy", message: { role: "assistant", provider: "openrouter", model: "openai/gpt", usage: usage(250_000, 0) } },
+	];
+	const result = new SessionLedger(resolver, (provider) => provider === "openrouter" ? "openrouter:main" : undefined).summarize(entries, { accountKey: "openrouter:main", providerId: "openrouter" });
+	assert.equal(result.reported, 0);
+	assert.equal(result.hasReportedUsage, false);
+	assert.equal(result.estimated, 0.25);
+	assert.equal(result.estimatedEntries, 1);
+});
+
+test("Session Ledger accounts a split compaction from its per-call components", () => {
+	const resolver = new PricingResolver([model("openrouter", "openai/gpt", { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })]);
+	// A split compaction merges two summarization calls; the first was billed by
+	// the provider, the second is only locally priced.
+	const merged = {
+		...usage(1_500_000, 0),
+		billingComponents: [
+			{ ...usage(1_000_000, 0), reportedCost: { amount: 0.42, currency: "USD", source: "openrouter" } },
+			usage(500_000, 0),
+		],
+	};
+	const entries = [
+		{ type: "compaction", id: "compact", usage: merged },
+		{ type: "custom", id: "map", customType: "usage-footer-attribution", data: { targetEntryId: "compact", accountKey: "openrouter:main", providerId: "openrouter", modelId: "openai/gpt", kind: "compaction", recordedAt: 2 } },
+	];
+	const result = new SessionLedger(resolver, () => undefined).summarize(entries, { accountKey: "openrouter:main", providerId: "openrouter" });
+	assert.equal(result.reported, 0.42);
+	assert.equal(result.estimated, 0.5);
+	assert.equal(result.reportedEntries, 1);
+	assert.equal(result.estimatedEntries, 1);
+	assert.equal(result.attributedEntries, 1);
+});
+
 test("Session Ledger attributes compactions and maps legacy provider-only entries", () => {
 	const resolver = new PricingResolver([model("openai-codex", "gpt", { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 })]);
 	const entries = [
