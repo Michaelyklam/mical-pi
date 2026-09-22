@@ -1,0 +1,72 @@
+{
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "environment": {
+    "node": "v22.23.2",
+    "vitest": "5.0.0",
+    "typescript": "7.0.2"
+  },
+  "runs": {
+    "baseline-visible": {
+      "exitCode": 0,
+      "log": "/tmp/jev-repo-author-foosheq/validation/durable-history/baseline-visible.log",
+      "summary": "300 passed (300)"
+    },
+    "baseline-hidden": {
+      "exitCode": 1,
+      "log": "/tmp/jev-repo-author-foosheq/validation/durable-history/baseline-hidden.log",
+      "summary": "37 failed | 300 passed (337)"
+    },
+    "reference-all": {
+      "exitCode": 0,
+      "log": "/tmp/jev-repo-author-foosheq/validation/durable-history/reference-all.log",
+      "summary": "337 passed (337)"
+    }
+  },
+  "sourceTypecheck": {
+    "exitCode": 0,
+    "command": [
+      "node",
+      "node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "es2023",
+      "--module",
+      "esnext",
+      "--moduleResolution",
+      "bundler",
+      "--skipLibCheck",
+      "--strict",
+      "src/lib/editorDocument.ts",
+      "src/lib/eq.ts",
+      "src/lib/workspace.ts",
+      "src/lib/workspaceSession.ts"
+    ],
+    "log": "/tmp/jev-repo-author-foosheq/validation/durable-history/typecheck.log"
+  },
+  "semanticMutationChecks": [
+    {
+      "task": "durable-history",
+      "mutation": "persist-preview",
+      "sourcePath": "src/lib/workspaceSession.ts",
+      "exitCode": 1,
+      "summary": "Tests  2 failed | 35 passed (37)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/durable-history/persist-preview.log"
+    },
+    {
+      "task": "durable-history",
+      "mutation": "tolerant-session",
+      "sourcePath": "src/lib/workspaceSession.ts",
+      "exitCode": 1,
+      "summary": "Tests  10 failed | 27 passed (37)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/durable-history/tolerant-session.log"
+    },
+    {
+      "task": "durable-history",
+      "mutation": "cancel-loses-redo",
+      "sourcePath": "src/lib/workspace.ts",
+      "exitCode": 1,
+      "summary": "Tests  2 failed | 35 passed (37)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/durable-history/cancel-loses-redo.log"
+    }
+  ]
+}

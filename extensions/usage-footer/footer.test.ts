@@ -31,6 +31,19 @@ test("wide footer puts account, status, cost, and usage above context and git me
 	assert.match(lines[1]!, /^Ctx: 72\.5k\/371k.*⎇ main.*\(\+12,-4\)/);
 });
 
+test("git metadata shows the repository name alongside its branch", () => {
+	const line = renderFooterLines({ ...base, repoName: "mical-pi" }, 140, theme)[1]!;
+	assert.match(line, /⎇ mical-pi\/main/);
+	const detached = renderFooterLines({ ...base, repoName: "mical-pi", branch: null }, 140, theme)[1]!;
+	assert.match(detached, /⎇ mical-pi/);
+	assert.doesNotMatch(detached, /mical-pi\//);
+	for (const width of [23, 40, 60]) {
+		for (const row of renderFooterLines({ ...base, repoName: "mical-pi" }, width, theme)) {
+			assert.ok(visibleWidth(row) <= width);
+		}
+	}
+});
+
 test("subagent and workflow activity gets a dedicated row below account information", () => {
 	const lines = renderFooterLines({
 		...base,

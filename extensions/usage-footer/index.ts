@@ -2,7 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { HOST_TELEMETRY_EVENT } from "../host-telemetry/index.ts";
 import type { HostTelemetrySnapshot } from "../host-telemetry/monitor.ts";
 import { FAST_MODE_STATUS_KEY } from "../shared/fast-mode-status.ts";
@@ -56,6 +56,7 @@ export default function usageFooter(pi: ExtensionAPI) {
 	const childCosts = new ChildCostTracker();
 	let hostTelemetry: HostTelemetrySnapshot | undefined;
 	let git: GitChanges | undefined;
+	let repoName: string | undefined;
 	let gitTimer: NodeJS.Timeout | undefined;
 	const snapshotStore = new JsonSnapshotStore(SNAPSHOT_FILE);
 
@@ -76,17 +77,19 @@ export default function usageFooter(pi: ExtensionAPI) {
 
 	async function refreshGit(ctx: ExtensionContext): Promise<void> {
 		try {
-			const [unstaged, staged] = await Promise.all([
+			const [unstaged, staged, root] = await Promise.all([
 				pi.exec("git", ["diff", "--shortstat"], { cwd: ctx.cwd, timeout: 3000 }),
 				pi.exec("git", ["diff", "--cached", "--shortstat"], { cwd: ctx.cwd, timeout: 3000 }),
+				pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: ctx.cwd, timeout: 3000 }),
 			]);
+			repoName = root.code === 0 && root.stdout.trim() ? basename(root.stdout.trim()) : undefined;
 			if (unstaged.code !== 0 && staged.code !== 0) git = undefined;
 			else {
 				const a = parseShortstat(unstaged.stdout || "");
 				const b = parseShortstat(staged.stdout || "");
 				git = { insertions: a.insertions + b.insertions, deletions: a.deletions + b.deletions };
 			}
-		} catch { git = undefined; }
+		} catch { git = undefined; repoName = undefined; }
 		requestRender?.();
 	}
 
@@ -172,6 +175,7 @@ export default function usageFooter(pi: ExtensionAPI) {
 						contextTokens: ctx.getContextUsage()?.tokens ?? undefined,
 						contextWindowTokens: model.contextWindow,
 						branch: footerData.getGitBranch(),
+						repoName,
 						git,
 						host: hostTelemetry,
 						cost,

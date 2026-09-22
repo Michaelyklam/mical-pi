@@ -1,0 +1,53 @@
+{
+  "sourceRevision": "503adb5f944d3443d3e82f2c337c3a6f0d9e5d41",
+  "files": [
+    {
+      "path": "extensions/workflows/controller.test.ts",
+      "sha256": "02b4e250bdeab813ec4c3b913fce6451991685e7668c5da2bae56ea6eb50d6a1",
+      "committedSha256": "02b4e250bdeab813ec4c3b913fce6451991685e7668c5da2bae56ea6eb50d6a1",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/workflows/controller.ts",
+      "sha256": "01889207e7f85b1251df8c5b8e47bf18df02e3dedfb3ef586c69e97ad27c77e7",
+      "committedSha256": "01889207e7f85b1251df8c5b8e47bf18df02e3dedfb3ef586c69e97ad27c77e7",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/workflows/sandbox-child.cjs",
+      "sha256": "d28ccb7bfeddaf0b0b08371e90199822a3a4d798fa07876d9095d013916a7836",
+      "committedSha256": "d28ccb7bfeddaf0b0b08371e90199822a3a4d798fa07876d9095d013916a7836",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/workflows/sandbox.test.ts",
+      "sha256": "c9762337efe555ef6eca316dfa8cd1518027e1624a66d1910f54e6800ac57608",
+      "committedSha256": "c9762337efe555ef6eca316dfa8cd1518027e1624a66d1910f54e6800ac57608",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/workflows/sandbox.ts",
+      "sha256": "426dbcf6cc2394ee2be1bb32fed6ea05666861aa58f75f3e277ca15730ea9c90",
+      "committedSha256": "426dbcf6cc2394ee2be1bb32fed6ea05666861aa58f75f3e277ca15730ea9c90",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/workflows/serialization.test.ts",
+      "sha256": "3309b0e2490ae4f159145deaf0d535286c0f51b6498d51f245eead54a0920218",
+      "committedSha256": "3309b0e2490ae4f159145deaf0d535286c0f51b6498d51f245eead54a0920218",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/workflows/serialization.ts",
+      "sha256": "a4d44564e4059aaac138e0c4f878d5393ac60c3b245f89370ebafc93ca9e0a6a",
+      "committedSha256": "a4d44564e4059aaac138e0c4f878d5393ac60c3b245f89370ebafc93ca9e0a6a",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "package.json",
+      "sha256": "609158e6c5fbc237939fa3ddf7faab80ab690bdc0c8d584414a885130103c4e8",
+      "committedSha256": null,
+      "change": "minimal test manifest"
+    }
+  ]
+}

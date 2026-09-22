@@ -1,0 +1,75 @@
+{
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "environment": {
+    "node": "v22.23.2",
+    "vitest": "5.0.0",
+    "typescript": "7.0.2"
+  },
+  "runs": {
+    "baseline-visible": {
+      "exitCode": 0,
+      "log": "/tmp/jev-repo-author-foosheq/validation/cancellable-capture/baseline-visible.log",
+      "summary": "426 passed (426)"
+    },
+    "baseline-hidden": {
+      "exitCode": 1,
+      "log": "/tmp/jev-repo-author-foosheq/validation/cancellable-capture/baseline-hidden.log",
+      "summary": "19 failed | 426 passed (445)"
+    },
+    "reference-all": {
+      "exitCode": 0,
+      "log": "/tmp/jev-repo-author-foosheq/validation/cancellable-capture/reference-all.log",
+      "summary": "445 passed (445)"
+    }
+  },
+  "sourceTypecheck": {
+    "exitCode": 0,
+    "command": [
+      "node",
+      "node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "es2023",
+      "--module",
+      "esnext",
+      "--moduleResolution",
+      "bundler",
+      "--skipLibCheck",
+      "--strict",
+      "--types",
+      "w3c-web-hid",
+      "src/lib/device.ts",
+      "src/lib/deviceCapture.ts",
+      "src/lib/editorDocument.ts",
+      "src/lib/eq.ts",
+      "src/lib/workspace.ts"
+    ],
+    "log": "/tmp/jev-repo-author-foosheq/validation/cancellable-capture/typecheck.log"
+  },
+  "semanticMutationChecks": [
+    {
+      "task": "cancellable-capture",
+      "mutation": "cancelled-close-success",
+      "sourcePath": "src/lib/device.ts",
+      "exitCode": 1,
+      "summary": "Tests  2 failed | 17 passed (19)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/cancellable-capture/cancelled-close-success.log"
+    },
+    {
+      "task": "cancellable-capture",
+      "mutation": "stale-success-published",
+      "sourcePath": "src/lib/deviceCapture.ts",
+      "exitCode": 1,
+      "summary": "Tests  1 failed | 18 passed (19)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/cancellable-capture/stale-success-published.log"
+    },
+    {
+      "task": "cancellable-capture",
+      "mutation": "snapshot-input-alias",
+      "sourcePath": "src/lib/deviceCapture.ts",
+      "exitCode": 1,
+      "summary": "Tests  1 failed | 18 passed (19)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/cancellable-capture/snapshot-input-alias.log"
+    }
+  ]
+}

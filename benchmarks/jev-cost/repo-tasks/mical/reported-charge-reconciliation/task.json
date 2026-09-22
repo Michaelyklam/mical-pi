@@ -1,0 +1,24 @@
+{
+  "id": "reported-charge-reconciliation",
+  "repo": "mical-pi",
+  "split": "calibration",
+  "kind": "feature",
+  "prompt": "Implement provider-reported charge reconciliation in the selected usage-footer subsystem. This is a new feature, not a claim of an existing production defect. SessionLedger currently estimates every attributable request using PricingResolver. Preserve that fallback and its canonical/tier pricing behavior, but allow durable provider charge observations to replace estimates per request.\n\nAdd exported REPORTED_COST_ENTRY = \"usage-footer-reported-cost\" in session-ledger.ts and a ReportedCostRecord interface in domain.ts with targetEntryId, accountKey, providerId, amount, currency, source, recordedAt. The first three and source are nonempty strings; amount is a finite nonnegative number; currency must be exactly \"USD\"; recordedAt is a finite nonnegative number. Accept only custom entries with this customType and a valid non-array object data payload. Ignore malformed records without throwing. Records may occur before their targets. For each target, consider only records matching the selected accountKey AND the request's providerId; greatest recordedAt wins, with later array position breaking ties. A newer invalid or foreign-account record must not hide an older applicable record.\n\nKeep the existing attribution rules for assistant, compaction and branch_summary usage, legacy resolution, tool exclusion and attributed/excluded counters. Charges cannot attribute otherwise excluded entries, and orphan charges contribute nothing. Provider identity must also equal the selected account.providerId before a charge can apply. For an eligible request, a valid charge replaces the entire estimate, even for a zero-dollar charge or a model with no registry price. Sum charges into reported; never infer reported charges from Usage.cost (those are locally calculated). Only requests without a valid charge contribute to estimated, hasEstimatedUsage, hasUnpricedUsage and pricingSources. Do not mutate entries or pricing metadata. Do not persist pricing rates or fetch external data.\n\nThe workspace is a selected real subsystem from mical-pi. Follow its TypeScript style and node:test conventions. Add tests as needed; existing tests must continue to pass.",
+  "visibleTestCommand": [
+    "node",
+    "--import",
+    "tsx",
+    "--test",
+    "extensions/usage-footer/pricing-ledger.test.ts"
+  ],
+  "hiddenRoot": "hidden",
+  "hiddenTestCommand": [
+    "node",
+    "--import",
+    "tsx",
+    "--test",
+    "hidden/feature.test.ts"
+  ],
+  "sourceRevision": "503adb5f944d3443d3e82f2c337c3a6f0d9e5d41",
+  "notes": "Run commands from the baseline workspace root. Copy hidden/ there only after completion. Overlay reference/ only for trusted author validation. Offline; tsx is supplied by the parent dependency mount."
+}

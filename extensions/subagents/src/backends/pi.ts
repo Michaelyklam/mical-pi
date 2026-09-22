@@ -29,12 +29,12 @@ import { Effect, Queue, Stream } from "effect";
 import type { SubagentBackend, SubagentSession } from "../backend.ts";
 import type {
   SpawnTask,
+  RunOutcome,
   SubagentEvent,
   SubagentMeta,
   TranscriptPart,
 } from "../domain.ts";
 import { CompactError, SendError, SpawnError } from "../domain.ts";
-import { piModelProviderViolation } from "../provider-policy.ts";
 import { summarizeSessionEntries } from "../../../shared/billing.ts";
 import { createToolCallTimeoutGuard } from "../../../shared/tool-call-timeout.ts";
 
@@ -59,19 +59,15 @@ type ThinkingLevel = NonNullable<
   NonNullable<Parameters<typeof createAgentSession>[0]>["thinkingLevel"]
 >;
 
-/**
- * Resolve a model only within the parent's exact Pi provider. Provider IDs
- * are billing-route boundaries, so even an unambiguous model from another
- * provider must not be selected by a child.
- */
-function resolvePiModel(
+/** Resolve explicit provider/model hints; bare IDs use the parent provider. */
+export function resolvePiModel(
   registry: ModelRegistry,
   hint: string | undefined,
   inherited: { provider: string; id: string } | undefined,
 ): Model<any> {
   if (!inherited) {
     throw new Error(
-      "Pi subagents require an active parent model so its provider billing route can be enforced.",
+      "Pi subagents require an active parent model to resolve inherited defaults.",
     );
   }
 
@@ -82,13 +78,10 @@ function resolvePiModel(
     provider = id.slice(0, slash);
     id = id.slice(slash + 1);
   }
-  const violation = piModelProviderViolation(provider, inherited.provider);
-  if (violation) throw new Error(violation);
-
-  const found = registry.find(inherited.provider, id);
+  const found = registry.find(provider, id);
   if (found) return found;
   throw new Error(
-    `Unknown model "${id}" for parent provider "${inherited.provider}". Pi subagents may only use models from the parent's provider billing route.`,
+    `Unknown model "${id}" for provider "${provider}".`,
   );
 }
 
@@ -185,7 +178,7 @@ function messageRole(msg: unknown): Message["role"] | undefined {
 }
 
 function lastAssistantMessage(
-  session: AgentSession,
+  session: Pick<AgentSession, "messages">,
 ): AssistantMessage | undefined {
   const messages = session.messages;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -195,20 +188,18 @@ function lastAssistantMessage(
   return undefined;
 }
 
-/** Final assistant text output (last assistant message with text), v1 semantics. */
-function finalOutput(session: AgentSession): string {
-  const messages = session.messages;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (messageRole(msg) !== "assistant") continue;
-    const text = (msg as AssistantMessage).content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("\n")
-      .trim();
-    if (text) return text;
+/** Classify the actual last response, never an earlier progress message. */
+export function piRunOutcome(session: Pick<AgentSession, "messages">, runError?: string): RunOutcome {
+  const last = lastAssistantMessage(session);
+  const text = last?.content.filter(part => part.type === "text").map(part => part.text).join("\n").trim() ?? "";
+  const partialText = text || undefined;
+  if (last?.stopReason === "aborted") return { _tag: "Interrupted", partialText };
+  const errorText = runError ?? (last?.stopReason === "error" ? (last.errorMessage ?? "Run failed") : undefined);
+  if (errorText !== undefined) return { _tag: "Failed", errorText: boundedError(errorText), partialText };
+  if (!last || last.stopReason !== "stop" || last.content.some(part => part.type === "toolCall")) {
+    return { _tag: "Failed", errorText: "The subagent stopped without a final response. Its last action is not a completed assignment.", partialText };
   }
-  return "";
+  return { _tag: "Completed", finalText: text };
 }
 
 function safeJson(value: unknown): string | undefined {
@@ -408,37 +399,9 @@ const makePiSession = (
     };
 
     const settle = () => {
-      if (state.settled) return;
+      if (state.settled || session.isStreaming || session.isCompacting) return;
       state.settled = true;
-      const last = lastAssistantMessage(session);
-      const partialText = finalOutput(session) || undefined;
-      if (last?.stopReason === "aborted") {
-        emit({
-          _tag: "RunSettled",
-          outcome: { _tag: "Interrupted", partialText },
-        });
-        return;
-      }
-      const errorText =
-        state.runError ??
-        (last?.stopReason === "error"
-          ? (last.errorMessage ?? "Run failed")
-          : undefined);
-      if (errorText !== undefined) {
-        emit({
-          _tag: "RunSettled",
-          outcome: {
-            _tag: "Failed",
-            errorText: boundedError(errorText),
-            partialText,
-          },
-        });
-        return;
-      }
-      emit({
-        _tag: "RunSettled",
-        outcome: { _tag: "Completed", finalText: finalOutput(session) },
-      });
+      emit({ _tag: "RunSettled", outcome: piRunOutcome(session, state.runError) });
     };
 
     const handleEvent = (event: AgentSessionEvent) => {
@@ -590,8 +553,8 @@ const makePiSession = (
       compact: Effect.tryPromise({
         try: async () => {
           if (state.closed) throw new Error("Subagent session is closed.");
-          if (session.isStreaming) {
-            throw new Error("Wait for the subagent to settle before compacting it.");
+          if (session.isStreaming || session.isCompacting) {
+            throw new Error("Wait for the subagent to finish working or compacting before requesting compaction.");
           }
           const result = await session.compact(
             "Preserve decisions, artifact paths, checks, limitations, and outstanding work needed for the next assignment.",
@@ -615,12 +578,13 @@ const makePiSession = (
         } catch {
           // Abort regardless.
         }
+        session.abortCompaction();
         await session.abort().catch(() => undefined);
         // Only resolve once streaming has actually stopped: reporting the
         // interrupt as complete while the run keeps working would let the
         // manager settle a run that is still mutating the workspace. The
         // manager bounds this effect at 5s and force-disposes on timeout.
-        while (!state.closed && session.isStreaming) {
+        while (!state.closed && (session.isStreaming || session.isCompacting)) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
         // No streaming run means no agent_settled will arrive; emit the

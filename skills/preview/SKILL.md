@@ -1,7 +1,7 @@
 ---
 name: preview
 description: Publish browser-viewable HTML artifacts through Preview. Use when creating a visual artifact, mockup, report, diagram, interactive demo, or other generated files that the user should inspect in a browser.
-compatibility: Linux with access to /home/michael/personal-website-data/preview and standard shell tools.
+compatibility: Linux with access to /home/michael/Data/personal-website/preview and standard shell tools.
 ---
 
 # Preview

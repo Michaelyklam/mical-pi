@@ -1,0 +1,44 @@
+{
+  "id": "group-graph-gesture",
+  "repo": "foosheq",
+  "split": "evaluation",
+  "kind": "feature",
+  "prompt": "Implement a model-level grouped graph gesture API for the main eight-slot EQ editor. This is a new feature; existing single-band helpers must remain compatible. The graph should preview a multi-selection without changing history, then commit once against the latest document without overwriting unrelated edits. No React or DOM work is required.\n\nIn src/components/graphBandDraft.ts export beginGraphGesture(profile, selectedIds), updateGraphGesture(gesture, delta), and rebaseGraphGesture(profile, gesture). In src/lib/workspace.ts export commitGraphGesture(history, gesture). Types may be exported as needed. A gesture owns a detached base EditorProfile, sorted unique selectedIds and a detached draft EditorProfile. Only IDs currently visible according to visibleBandIds may be selected (bypassed visible slots are eligible). Ignore unknown/hidden IDs. begin returns draft equal to base. update returns a new gesture and never mutates any input.\n\nDelta is {octaves?:number,gain?:number,qOctaves?:number}; omitted axes mean zero. Reject any supplied non-finite axis. Each update is absolute relative to the gesture base, not incremental relative to its previous draft. Frequency and Q move multiplicatively by 2**delta, gain additively. Clamp each requested delta ONCE to the intersection allowed by every selected band's LIMITS. This keeps the group's spacing and gain differences until final rounding. Round only changed axes using the editor's existing precision (frequency integer, gain tenth, Q hundredth). An effective zero axis must preserve the exact imported value, including fractional frequency/Q/gain. At a bound, a group-wide no-op keeps precision. Do not change id, type, enabled, membership, unselected bands, profile identity or metadata. An empty selection is a no-op (but invalid deltas still reject).\n\nrebaseGraphGesture returns {profile,conflicts}, where conflicts is a deterministic sorted array of {id,field}; field is \"profile\", \"membership\", \"frequency\", \"gain\" or \"q\". If profile.id differs from base.id, return the supplied profile unchanged with exactly [{id:0,field:\"profile\"}]. Otherwise inspect only fields actually changed in the draft. Rebase by band ID, not array position. For each selected slot with any changes, if it is no longer visible or is missing, skip all changes to it and report one membership conflict. For each changed field, if latest equals base, apply draft; if latest already equals draft, leave it without conflict; otherwise preserve latest and report that field as a conflict. Still apply other nonconflicting fields/slots. Preserve current bypass, Q when unedited, slot additions/removals, name, preamp, and all unrelated latest data. Conflicts sort by numeric ID, then field lexicographically. Never mutate latest/base/draft. A no-op returns the supplied profile object.\n\ncommitGraphGesture returns {history,conflicts}. It uses the same rebase against history.present and records all accepted changes as exactly one ordinary history set, so undo returns the latest pre-commit profile rather than the old gesture base. A no-op preserves history identity and redo. It throws if history.checkpoint is non-null (the gesture API owns previews outside history; nested transactions are unsupported). Existing 80-entry cap and editor serialization/membership semantics must hold. Keep all existing tests passing.\n",
+  "visibleTestCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--configLoader",
+    "runner",
+    "--config",
+    "vitest.config.ts",
+    "src/lib/eq.test.ts",
+    "src/lib/editorDocument.test.ts",
+    "src/lib/workspace.test.ts",
+    "src/components/graphBandDraft.test.ts"
+  ],
+  "hiddenTestCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--configLoader",
+    "runner",
+    "--config",
+    "vitest.config.ts",
+    "src/lib/eq.test.ts",
+    "src/lib/editorDocument.test.ts",
+    "src/lib/workspace.test.ts",
+    "src/components/graphBandDraft.test.ts",
+    "src/components/groupGraphGesture.hidden.test.ts"
+  ],
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "notes": {
+    "difficulty": "hard",
+    "sourceRoot": "apps/foosheq",
+    "dependencies": [
+      "vitest (existing tests use Vitest; no browser runner required)"
+    ],
+    "isolation": "Expose only baseline and prompt to the model. Overlay hidden only for grading. Never expose reference, review.md or validation logs. All device and storage interactions in tests are mocks. No package installation or network needed.",
+    "sanitization": "Allowlisted committed source and existing tests only. No .git, environment files, deployment files, credentials, node_modules or private service URLs. Source bytes unchanged."
+  }
+}

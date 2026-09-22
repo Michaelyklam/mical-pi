@@ -243,21 +243,16 @@ test("the concurrency cap rejects a 17th running subagent", async () => {
   });
 });
 
-test("cross-provider native harnesses fail before consuming a slot", async () => {
+test("native harnesses accept cross-provider spawns", async () => {
   await withManager(async (manager, runtime) => {
-    await assert.rejects(
-      runTool(
-        runtime,
-        manager.spawn("codex", task("must not run", "anthropic")),
-      ),
-      /different provider billing route/,
-    );
-    const snap = await runTool(runtime, manager.spawn("codex", task("ok")));
-    assert.equal(snap.backend, "codex");
+    for (const [backend, provider] of [["codex", "anthropic"], ["claude", "openai-codex"]] as const) {
+      const snap = await runTool(runtime, manager.spawn(backend, task("ok", provider)));
+      assert.equal(snap.backend, backend);
+    }
   });
 });
 
-test("pi rejects an explicitly cross-provider model before session creation", async () => {
+test("pi looks up cross-provider models and rejects unknown models", async () => {
   await withManager(async (manager, runtime) => {
     const spawnTask = task("must not run", "anthropic");
     await assert.rejects(
@@ -268,11 +263,15 @@ test("pi rejects an explicitly cross-provider model before session creation", as
           model: "openai-codex/gpt-5.4",
           parent: {
             ...spawnTask.parent,
-            modelRegistry: { find: () => undefined } as never,
+            modelRegistry: { find: (provider: string, id: string) => {
+              assert.equal(provider, "openai-codex");
+              assert.equal(id, "gpt-5.4");
+              return undefined;
+            } } as never,
           },
         }),
       ),
-      /does not match the parent provider/,
+      /Unknown model "gpt-5.4" for provider "openai-codex"/,
     );
   });
 });

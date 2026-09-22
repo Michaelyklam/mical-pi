@@ -2,7 +2,7 @@
 
 /** Describes subagent_spawn, including harnesses and the fixed concurrency cap. */
 export const SUBAGENT_SPAWN_TOOL_DESCRIPTION =
-  "Spawn a background subagent: a fully autonomous, headless agent with its own context window and the selected harness's normal host permissions. Provider billing routes are isolated: pi children must use the parent model's exact provider; Claude Code is available only to anthropic parents; Codex CLI is available only to openai-codex parents. Fire-and-forget: this returns immediately with an id. When the subagent settles, its output arrives on its own between your tool calls, so keep working instead of waiting for it; subagent_check peeks at progress and subagent_send redirects it mid-run. Children cannot orchestrate more agents/workflows or ask the user, and cannot see this conversation, so the prompt must be self-contained. Only use trusted working directories. Max 16 subagents can be running at once across all harnesses.";
+  "Spawn a background subagent: a fully autonomous, headless agent with its own context window and the selected harness's normal host permissions. Fire-and-forget: this returns immediately with an id. When the subagent settles, its output is injected automatically. Continue independent work if available; otherwise give a pending-work update and end the turn so the main session stays available. subagent_check inspects actionable progress and subagent_send redirects it mid-run. Children cannot orchestrate more agents/workflows or ask the user, and cannot see this conversation, so the prompt must be self-contained. Only use trusted working directories. Max 16 subagents can be running at once across all harnesses.";
 
 /** Adds background subagent delegation to the parent model's available-tools prompt. */
 export const SUBAGENT_SPAWN_PROMPT_SNIPPET =
@@ -11,11 +11,10 @@ export const SUBAGENT_SPAWN_PROMPT_SNIPPET =
 /** Guides the parent model to delegate standalone tasks and avoid unnecessary blocking waits. */
 export const SUBAGENT_SPAWN_PROMPT_GUIDELINES = [
   "Use subagent_spawn to delegate self-contained tasks that can run in the background; give it a complete, standalone prompt.",
-  "Use the pi harness with its inherited model by default so subagent work stays on the parent's provider billing route.",
-  "Never select a model from a different provider. Claude Code is permitted only when the parent provider is anthropic; Codex CLI is permitted only when the parent provider is openai-codex.",
-  "After subagent_spawn, keep working on parent tasks. A child's result is injected between your tool calls when it settles, so subagent_wait is only for when you cannot take another step without the result.",
-  "Use subagent_check to peek at a running child and subagent_send to correct, narrow, or follow up on it. Prefer those over cancelling and respawning.",
-  "After every Pi subagent task settles, call subagent_compact. It compacts only when context exceeds 40,000 tokens. Claude Code and Codex subagents cannot be compacted.",
+  "Read the subagents skill before using subagent_spawn for provider selection and harness defaults.",
+  "After subagent_spawn, continue only independent parent work; leave the assigned investigation and implementation to the worker. Results arrive automatically. If nothing independent remains, give a pending-work update and end the turn without claiming completion; resume when the result arrives. Reserve subagent_wait for an explicit user request for a blocking wait.",
+  "Use subagent_check when progress information would change your next action, not for routine polling. Review the actual patch, then consolidate corrections through subagent_send to the same worker.",
+  "Leave settled subagents unmodified unless you need them again. Send follow-up work directly with subagent_send; Pi children with self-compaction enabled manage their own context. Reserve subagent_compact for manual recovery when that context management is unavailable or insufficient, or when the user requests it. Claude Code and Codex subagents cannot be compacted through this tool.",
 ];
 
 /** Model-facing schema descriptions for subagent_spawn task and execution options. */
@@ -24,11 +23,11 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
     "Task prompt for the subagent. Must be self-contained: include all needed context, file paths, and what to report back.",
   name: "Short human-readable name for this subagent, shown in listings and the UI",
   harness:
-    'Harness to run the subagent on. Use "pi" by default. "claude" is allowed only for an anthropic parent; "codex" only for an openai-codex parent. Cross-provider spawns are rejected.',
+    'Harness to run the subagent on: "pi", "claude" (Claude Code), or "codex" (Codex CLI).',
   workingDir:
     "Trusted working directory for the autonomous child (default: current working directory)",
   model:
-    'Model hint interpreted by the chosen harness. Pi model hints are restricted to the parent model\'s exact provider; omit to inherit the current model. Claude and Codex hints use their native aliases/slugs when those harnesses are permitted.',
+    'Model hint interpreted by the chosen harness. Pi accepts provider/model-id or a bare ID within the parent provider; omit to inherit the current model. Claude and Codex use native aliases/slugs.',
   reasoningEffort:
     "Reasoning effort on a shared scale; the harness maps it to its nearest native equivalent (pi thinking level, codex reasoning effort, claude thinking budget). Omit for the harness default (pi inherits the current level).",
 };
@@ -43,15 +42,14 @@ export function buildSubagentSpawnResult(options: {
 }) {
   return (
     `Spawned subagent ${options.id} "${options.title}" (${options.harness}: ${options.modelLabel}, ${options.cwd}).\n` +
-    `It runs in the background. Its result will be injected between your tool calls when it finishes, so continue with other work. ` +
-    `subagent_check to peek, subagent_send to steer it, subagent_cancel to stop it, subagent_list to see all, ` +
-    `subagent_wait(ids: ["${options.id}"]) only if you cannot proceed without the result.`
+    `It runs in the background. Its result arrives automatically when it finishes. Continue independent work if available; otherwise give a pending-work update and end the turn. ` +
+    `Use subagent_check only to investigate progress, subagent_send to steer it, subagent_cancel to stop it, or subagent_list to see all. No blocking wait is needed for automatic delivery.`
   );
 }
 
 /** Describes explicit blocking collection of one or more subagent results. */
 export const SUBAGENT_WAIT_TOOL_DESCRIPTION =
-  "Block until all listed subagents have settled, then return their final outputs. This parks your turn and the user cannot get a reply until it returns, so prefer letting results arrive on their own and use this only when you cannot take another step without the result. Results already injected into this conversation are reported as a pointer rather than repeated.";
+  "Legacy blocking wait: use only when the user explicitly requests a blocking wait. Normally, subagent results are injected automatically; continue independent work or end the turn with a pending-work update instead. This tool parks your turn and prevents a reply until all listed subagents settle. Results already delivered are reported as a pointer rather than repeated.";
 
 /** Model-facing schema description for the subagent ids to await. */
 export const SUBAGENT_WAIT_PARAMETER_DESCRIPTIONS = {
@@ -69,7 +67,7 @@ export const SUBAGENT_CANCEL_PARAMETER_DESCRIPTIONS = {
 
 /** Describes explicit context compaction for settled Pi subagents. */
 export const SUBAGENT_COMPACT_TOOL_DESCRIPTION =
-  "Compact a settled Pi subagent before reusing it. The operation runs only when the child context exceeds 40,000 tokens; otherwise it returns a skip result. Claude Code and Codex backends do not support compaction and return an error.";
+  "Manually compact a settled Pi subagent for recovery when its own context management is unavailable or insufficient, or when the user requests it. For normal reuse, send follow-up work directly with subagent_send. This operation runs only above 40,000 context tokens; otherwise it returns a skip result. Claude Code and Codex backends do not support it and return an error.";
 
 export const SUBAGENT_COMPACT_PARAMETER_DESCRIPTIONS = {
   id: "Settled Pi subagent id to compact, e.g. \"sa-1\"",
@@ -94,7 +92,7 @@ export function buildSubagentCompactResult(options: {
 
 /** Describes nonblocking inspection of a subagent without consuming its result. */
 export const SUBAGENT_CHECK_TOOL_DESCRIPTION =
-  "Peek at a subagent's status and recent activity without blocking. Does not consume its result. Use this to check in on a running child between your own tool calls.";
+  "Peek at a subagent's status and recent activity without blocking. Does not consume its result. Use when progress information would change your next action, such as investigating a suspected stall; completion is delivered automatically.";
 
 /** Model-facing schema description for the subagent id to inspect. */
 export const SUBAGENT_CHECK_PARAMETER_DESCRIPTIONS = {
@@ -123,7 +121,7 @@ export function buildSubagentSendResult(options: {
     : "It had already settled, so this starts a new run on top of its existing context.";
   return (
     `Sent to ${options.id} "${options.title}". ${landing}\n` +
-    `Keep working: its result arrives between your tool calls when the run settles. Use subagent_check to peek meanwhile.`
+    `Its result arrives automatically when the run settles. Continue independent work if available; otherwise give a pending-work update and end the turn. No blocking wait is needed.`
   );
 }
 

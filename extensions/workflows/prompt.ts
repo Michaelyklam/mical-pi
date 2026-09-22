@@ -44,7 +44,9 @@ export const WORKFLOW_PROMPT_SNIPPET =
 
 /** Guides the model on appropriate workflow fan-out and mandatory agent result checks. */
 export const WORKFLOW_PROMPT_GUIDELINES = [
-  "Use workflow when a task needs several subagents with phase dependencies or dynamic fan-out; keep single small delegations in the main session.",
+  "Use workflow only when the user says 'ultracode' or explicitly requests a workflow run; keep ordinary delegation on subagent tools.",
+  "Read the subagents skill for model/provider selection before composing a workflow, and pass the selected model/provider explicitly to agent().",
+  "Give coding agents complete implementation/test/fix assignments with acceptance criteria. Keep parent work independent, request concise results with artifact paths for long logs, and review actual patches before accepting them. Consolidate repairs into one follow-up assignment with the prior findings; workflow agents do not retain earlier agents' sessions.",
   "In workflow scripts, agent() never throws — always check `.ok` on its result before using `.output`/`.structured`.",
 ];
 

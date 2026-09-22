@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-PREVIEW_ROOT=${PREVIEW_ROOT:-/home/michael/personal-website-data/preview}
+PREVIEW_ROOT=${PREVIEW_ROOT:-/home/michael/Data/personal-website/preview}
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://michaelyklam.me/preview}
 PREVIEW_MAX_SIZE_KIB=${PREVIEW_MAX_SIZE_KIB:-262144}
 

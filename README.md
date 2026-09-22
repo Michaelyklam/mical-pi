@@ -5,10 +5,10 @@ Michael's personal [pi](https://pi.dev) package: extensions, skills, prompts, an
 ## Install
 
 ```bash
-# On this machine — local path install, NOT copied, so edits are live and /reload picks them up
+# On this machine: local path install, NOT copied, so edits are live and /reload picks them up
 pi install ~/Coding/mical-pi
 
-# On another machine — pinned git ref
+# On another machine: pinned git ref
 pi install git:git@github.com:Michaelyklam/mical-pi@v1
 ```
 
@@ -52,7 +52,7 @@ picker, or set one directly with `/effort high`.
 ### `extensions/mcp-health`
 
 Replaces the persistent MCP footer entry with a silent-until-broken one. Shows nothing while
-servers are healthy; when one is not, names it — `MCP: hex failed 12s ago`, `MCP: hex needs auth`.
+servers are healthy; when one is not, names it: `MCP: hex failed 12s ago`, `MCP: hex needs auth`.
 
 Reads `pi-mcp-adapter`'s snapshot off pi's shared event bus
 (`pi-mcp-adapter/status/v1`) and renders under its own `mcp-health` footer key. Requires
@@ -169,7 +169,7 @@ Design and behavior are documented in [`CONTEXT.md`](CONTEXT.md),
 
 ### `extensions/firecrawl-web`
 
-Gives pi web access, which it otherwise has none of — the built-ins are only
+Gives pi web access, which it otherwise has none of: the built-ins are only
 `read`/`bash`/`edit`/`write`/`grep`/`find`/`ls`, and pi has no MCP client, so this is a
 plain custom tool pair backed by [Firecrawl](https://firecrawl.dev):
 
@@ -225,7 +225,7 @@ for the editor.
 Ported from [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup/tree/main/extensions/ask-user).
 One deviation: upstream depends on `effect` (a 4.x beta) purely to bridge pi's `AbortSignal`
 into the UI promise and to tell interruption from real failure. That's a few lines of
-`AbortController` here, so this port stays dependency-free. Behavior is identical — including
+`AbortController` here, so this port stays dependency-free. Behavior is identical, including
 abort-mid-popup reporting `Cancelled` rather than `dismissed`.
 
 ### `extensions/claude-plugin-receiver`
@@ -261,11 +261,10 @@ parent model's context. If `/btw` is opened while the parent is streaming, the s
 only messages persisted when the command starts.
 
 The companion skill teaches the model when and how to delegate, including the requirement that
-each child receive a self-contained prompt. Provider billing routes are isolated: Pi children
-inherit the parent model and may select only models under that exact provider ID; Claude Code is
-available only to `anthropic` parents; Codex CLI is available only to `openai-codex` parents.
-Cross-provider spawns fail closed. Claude and Codex children also require their respective
-CLI/SDK authentication.
+each child receive a self-contained prompt. Provider selection follows the
+[subagents skill](skills/subagents/SKILL.md), rather than runtime provider restrictions.
+Pi children inherit the parent model by default and accept explicit `provider/model-id` hints.
+Claude and Codex children require their respective CLI/SDK authentication.
 
 Vendored from
 [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup/tree/2657bae/extensions/subagents)
@@ -279,8 +278,8 @@ is included unchanged.
 Lets a long-running agent manage its own context window. Three thresholds track usage: a notice
 line, a warning line, and a hard cutoff. Crossing a line appends one guidance message to the
 session with the numbers from that moment; `view_context` reports the current numbers. At the
-hard cutoff every tool except the enabled self-compaction tool and `view_context` is blocked until
-the agent compacts.
+hard cutoff ordinary work tools are blocked until context is reduced. Compaction, status and
+cancellation tools remain available.
 
 Guidance is append-only. It used to be re-rendered on every LLM call and spliced out of the
 transcript between calls, which rewrote prompt material the provider had already cached: Pi puts
@@ -292,13 +291,38 @@ only detects crossings. The numbers in a guidance message are a snapshot; `view_
 live ones, and each crossing still shows the full guidance text once in the TUI. `cache-prefix.test.ts`
 pins this boundary down by asserting that every request is an exact prefix extension of the last.
 
-The agent compacts by calling `self_compact` with a `note_to_self`. The note is saved, the run
-ends, and Pi compacts once the agent is idle using this extension's compaction prompt. The note is
-returned to the agent byte for byte as the next message, so it resumes from its own `NEXT ACTION`
-without a new user prompt. `view_context` returns the current tokens, percent, level, and resolved
-thresholds as JSON. `/self-compact-now` asks the agent to compact immediately and reuses a saved
-note on retry; `/self-compact-info` prints settings, thresholds, usage, state, and prompt sources
-without an LLM turn.
+The model chooses when a logical work section is complete and substantial earlier context can be
+summarized. It calls `self_compact({note_to_self: "..."})` alone in a tool batch. Pi compacts after
+the batch, before the next assistant response, and returns the note byte for byte within the same
+task. It does not stop and restart the run, report a child as finished, or create an extra model
+turn when a task is complete. New instructions queued during compaction survive it.
+
+Failures retain the history and note. Below the hard cutoff, a failed note does not lock tools.
+Retry with `self_compact({})` to reuse the saved bytes against current history, or supply an updated
+note. If a run ends before its requested compaction starts, the request fails and the saved note
+remains available for explicit retry. Cancellation and reload never retry automatically.
+`/self-compact-now` retries a failed note directly, without a model turn to retype it; otherwise it
+asks for a new note. `/self-compact-cancel`
+cancels an attempt. `/self-compact-info` and `view_context` show state, errors, elapsed time, and the
+deadline without a model turn. The default total deadline is five minutes, including summary
+retries; change it with `--compact-timeout-ms 300000`.
+
+**Requires a Pi restart after installation.** `npm install` applies the maintained Pi 0.84.4
+lifecycle patch to the local SDK and global CLI, including its bundle. It adds the between-turn
+request API and one compaction owner shared by manual, native and self-compaction. Equivalent
+manual calls share an operation; conflicting requests fail busy. The session releases each request
+and emits completion once. Summary failures retain their cause. Once committed, compaction stays
+successful even if a notification handler fails. Informational `session_compact` and
+`session_compact_failed` listeners do not hold the operation open. Run settlement still waits for
+`agent_settled` extension handlers before publishing the public event. Timed-out or cancelled
+summaries cannot later replace history.
+
+The installer also accepts colon-separated `node_modules` directories in `PI_AI_PATCH_ROOTS` and
+upgrades previously patched copies without replacing unrelated dependency patches. Run
+`node scripts/patch-pi-coding-agent-compaction-lifecycle.mjs --check`
+to verify installation. Unsupported Pi versions fail the patch rather than guessing. Without the
+API, self-compaction fails clearly before saving a note; ordinary tools and native compaction
+remain available. `/reload` alone cannot replace an already-loaded Pi core.
 
 The TUI footer bar is off by default, because this package also ships `extensions/usage-footer`,
 which owns the footer. Pass `--compact-footer` to replace it with the self-compact context bar for a
@@ -322,39 +346,32 @@ outgrows the window before the agent compacts, a large tool result for example, 
 recovery and Pi fails that request. That is the upstream trade: the note is guaranteed to exist
 before the context is discarded. On a window too small for the fixed defaults, defaulted
 fields are clamped down and reported in `/self-compact-info`; an explicit flag that violates the
-ordering or the cap is rejected and leaves the extension inert with every tool blocked. Clamping is
-per field, so setting one flag does not disable clamping for the others.
+ordering or the cap is rejected and disables self-compaction without blocking ordinary tools or
+native compaction. Clamping is per field, so setting one flag does not disable it for the others.
 
-#### Proactive compaction: the agent decides, the extension nudges
+#### Logical work boundaries, not tool-call counts
 
-The agent is told to compact on its own judgement, well before any token threshold, whenever a
-stretch of tool calls is finished and their verbatim output is no longer needed (`PROMPT` in
-`guidance.ts`; it appears in the tool description, the guidelines, and the system-prompt line).
-The extension backs that up with triggers. Each sends one appended message to the model, once per
-compaction cycle, and none is ever rewritten or removed afterwards:
+`guidance.ts` asks the model to compact between substantial phases, such as an investigation and
+its implementation, when earlier output is no longer needed verbatim. It does not require
+compaction after every small checkpoint, every ten calls, or before a new user request. If the
+task is complete, report completion and stop.
 
-| trigger | when | delivery |
-| --- | --- | --- |
-| `CHECKPOINT` | the `TOOL_CALL_TRIGGER`th (10th) ordinary tool call since the last compaction, mid-run | appended, waits for the next turn |
-| `RUN ENDED` | a run ends having used at least 10 ordinary tool calls | follow-up turn, so the compaction happens while the user is typing |
-| `notice` / `warning` / `forced` | the token thresholds above | appended |
-| `now` | a run ends past the warning line (or while locked) | follow-up turn |
-
-`self_compact` and `view_context` calls do not count toward the trigger. `view_context` reports
-`tool_calls_since_compaction`, `tool_calls_this_run`, and `tool_call_trigger`. While a note is
-waiting to be compacted, or past the forced line with material to compact, every other tool is
-blocked; that lock is derived from the state, not stored, so a reload can never leave it stuck on.
+Only token thresholds send passive guidance, once per level per context cycle. No guidance
+starts a model turn. The tool-call counts in `view_context` are telemetry only. The lock is
+derived from a pending/active request or the hard cutoff, never merely from a failed saved note.
+A reload preserves interrupted notes for explicit recovery without starting model work.
 
 Vendored from
 [disler/self-compact-pi-agent](https://github.com/disler/self-compact-pi-agent/tree/576fe4abda021849f5cde5b6f5796467ffa4bcbd)
 at upstream commit `576fe4a` (MIT, Copyright (c) 2026 IndyDevDan). Local changes: fixed-baseline
 token defaults, per-field clamping, the default prompt files moved to
 `extensions/self-compact/prompts/`, the entry renamed to `index.ts`, the footer bar gated
-behind `--compact-footer`, the tool-call triggers and derived lock (`guidance.ts`, `index.ts`),
-and the append-only guidance messages. The upstream sample app,
+behind `--compact-footer`, logical-boundary guidance, recoverable notes, session-owned compaction,
+and append-only guidance messages. The upstream sample app,
 verification scripts, and e2e tests are not vendored; that detail and the full change list live in
 [`extensions/self-compact/UPSTREAM.md`](extensions/self-compact/UPSTREAM.md). Tests run with
-`npm run test:self-compact`.
+`npm run test:self-compact` and `npm run test:patch`, including scripted SDK lifecycle checks with
+no provider calls.
 
 ### `extensions/workflows`
 
@@ -408,7 +425,7 @@ Two consequences:
   is the source of truth; the script reads it rather than guessing.
 
 The wrapper is therefore **pinned** in `settings.json` (`npm:pi-agent-browser-native@0.3.0`).
-Pinned specs are skipped by `pi update --extensions`, which is deliberate — updates go
+Pinned specs are skipped by `pi update --extensions`, which is deliberate: updates go
 through this script so both halves move together and get verified before being kept.
 
 The script installs the wrapper, reads its new baseline, installs the matching upstream,
@@ -421,7 +438,7 @@ runs the wrapper doctor, and **rolls both back** if the doctor fails.
 pinned pi wins over the installed CLI and the doctor reports a false
 "Pi 0.84.0 or newer is required".
 
-This is not hypothetical — the installed CLI is 0.84.2, but:
+This is not hypothetical. The installed CLI is 0.84.2, but:
 
 | Repo | Local `node_modules/.bin/pi` |
 |---|---|
@@ -440,15 +457,15 @@ npm run typecheck
 npm test
 ```
 
-Extensions import pi core from `peerDependencies` (`"*"`) — pi provides those at runtime,
+Extensions import pi core from `peerDependencies` (`"*"`), which pi provides at runtime,
 so they must never be bundled.
 
 Edit → `/reload` in a running pi session. No reinstall needed with the local-path install.
 
 ## Not in this repo
 
-- `~/.pi/agent/settings.json` — mostly machine state (`lastChangelogVersion`).
+- `~/.pi/agent/settings.json`: mostly machine state (`lastChangelogVersion`).
   Exception worth knowing: it also holds the `packages` list and the
   `pi-agent-browser-native` version pin. Losing it loses that pin.
-- `~/.pi/agent/auth.json`, `models-store.json`, `sessions/` — credentials and history. Never commit these.
+- `~/.pi/agent/auth.json`, `models-store.json`, `sessions/`: credentials and history. Never commit these.
 - API keys and other secrets.

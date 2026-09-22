@@ -13,3 +13,4 @@ temp/
 benchmarks/zg-pi/runs/
 benchmarks/zg-pi/cache/
 benchmarks/zg-pi/index-meta.json
+.zvec-grep/

@@ -1,0 +1,74 @@
+{
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "environment": {
+    "node": "v22.23.2",
+    "vitest": "5.0.0",
+    "typescript": "7.0.2"
+  },
+  "runs": {
+    "baseline-visible": {
+      "exitCode": 0,
+      "log": "/tmp/jev-repo-author-foosheq/validation/portable-capture-transcript/baseline-visible.log",
+      "summary": "314 passed (314)"
+    },
+    "baseline-hidden": {
+      "exitCode": 1,
+      "log": "/tmp/jev-repo-author-foosheq/validation/portable-capture-transcript/baseline-hidden.log",
+      "summary": "63 failed | 314 passed (377)"
+    },
+    "reference-all": {
+      "exitCode": 0,
+      "log": "/tmp/jev-repo-author-foosheq/validation/portable-capture-transcript/reference-all.log",
+      "summary": "377 passed (377)"
+    }
+  },
+  "sourceTypecheck": {
+    "exitCode": 0,
+    "command": [
+      "node",
+      "node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "es2023",
+      "--module",
+      "esnext",
+      "--moduleResolution",
+      "bundler",
+      "--skipLibCheck",
+      "--strict",
+      "--types",
+      "w3c-web-hid",
+      "src/lib/device.ts",
+      "src/lib/deviceProtocol.ts",
+      "src/lib/deviceTranscript.ts",
+      "src/lib/eq.ts"
+    ],
+    "log": "/tmp/jev-repo-author-foosheq/validation/portable-capture-transcript/typecheck.log"
+  },
+  "semanticMutationChecks": [
+    {
+      "task": "portable-capture-transcript",
+      "mutation": "whole-backing-buffer",
+      "sourcePath": "src/lib/device.ts",
+      "exitCode": 1,
+      "summary": "Tests  2 failed | 61 passed (63)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/portable-capture-transcript/whole-backing-buffer.log"
+    },
+    {
+      "task": "portable-capture-transcript",
+      "mutation": "skip-band-pass-comparison",
+      "sourcePath": "src/lib/deviceProtocol.ts",
+      "exitCode": 1,
+      "summary": "Tests  4 failed | 59 passed (63)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/portable-capture-transcript/skip-band-pass-comparison.log"
+    },
+    {
+      "task": "portable-capture-transcript",
+      "mutation": "replay-clock",
+      "sourcePath": "src/lib/deviceTranscript.ts",
+      "exitCode": 1,
+      "summary": "Tests  1 failed | 62 passed (63)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/portable-capture-transcript/replay-clock.log"
+    }
+  ]
+}

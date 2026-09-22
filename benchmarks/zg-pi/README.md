@@ -1,6 +1,6 @@
 # Pi retrieval benchmark
 
-The production search tool now lives at `extensions/zg-search/index.ts`. Because `mical-pi` is installed as a user package, `zvec_grep_search` is available by default after starting a new pi session or running `/reload`. The tool is always registered, but each repository still needs a one-time `zg index` before indexed search can succeed.
+The production zvec extension was removed on 2026-09-15 after repeated search failures and excessive index disk usage. It is no longer part of the default mical-pi setup. These standalone benchmark scripts remain for historical reference; running their indexing commands will create new indexes.
 
 This benchmark compares pi's stock read-only retrieval tools with the same tools plus zvec-grep (`zg`). It measures complete repository Q&A runs rather than isolated query latency.
 

@@ -1,0 +1,41 @@
+{
+  "sourceRevision": "503adb5f944d3443d3e82f2c337c3a6f0d9e5d41",
+  "files": [
+    {
+      "path": "CONTEXT.md",
+      "sha256": "f5b1a1e6971862e9935dc96cda746ca6e9677d8c570dd9bff7695b7702353dd4",
+      "committedSha256": "f5b1a1e6971862e9935dc96cda746ca6e9677d8c570dd9bff7695b7702353dd4",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/usage-footer/domain.ts",
+      "sha256": "6276e12ec3ea9ee60e62124ff7dc33564db25ef07de5fbf5cd0361f91e9fd391",
+      "committedSha256": "6276e12ec3ea9ee60e62124ff7dc33564db25ef07de5fbf5cd0361f91e9fd391",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/usage-footer/pricing-ledger.test.ts",
+      "sha256": "c0c4e074270fcb419ee438f3584359ef6ab2167f07045cc3445e9f173cc100f2",
+      "committedSha256": "a163ced8f718a67cd8fa4a4afce0367af9162a02fd7209b2d2b04412d238f40d",
+      "change": "provider fixture renamed to router-fixture"
+    },
+    {
+      "path": "extensions/usage-footer/pricing.ts",
+      "sha256": "95862ad31347d137164b15a32e793eca67fa4963ded184e91526b1f1e3b73754",
+      "committedSha256": "95862ad31347d137164b15a32e793eca67fa4963ded184e91526b1f1e3b73754",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "extensions/usage-footer/session-ledger.ts",
+      "sha256": "9585a6c21bbfaca628494a1c185615ad921ae713927791b619c61367c34eb215",
+      "committedSha256": "9585a6c21bbfaca628494a1c185615ad921ae713927791b619c61367c34eb215",
+      "change": "verbatim committed source"
+    },
+    {
+      "path": "package.json",
+      "sha256": "609158e6c5fbc237939fa3ddf7faab80ab690bdc0c8d584414a885130103c4e8",
+      "committedSha256": null,
+      "change": "minimal test manifest"
+    }
+  ]
+}

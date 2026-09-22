@@ -1,0 +1,72 @@
+{
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "environment": {
+    "node": "v22.23.2",
+    "vitest": "5.0.0",
+    "typescript": "7.0.2"
+  },
+  "runs": {
+    "baseline-visible": {
+      "exitCode": 0,
+      "log": "/tmp/jev-repo-author-foosheq/validation/group-graph-gesture/baseline-visible.log",
+      "summary": "310 passed (310)"
+    },
+    "baseline-hidden": {
+      "exitCode": 1,
+      "log": "/tmp/jev-repo-author-foosheq/validation/group-graph-gesture/baseline-hidden.log",
+      "summary": "15 failed | 310 passed (325)"
+    },
+    "reference-all": {
+      "exitCode": 0,
+      "log": "/tmp/jev-repo-author-foosheq/validation/group-graph-gesture/reference-all.log",
+      "summary": "325 passed (325)"
+    }
+  },
+  "sourceTypecheck": {
+    "exitCode": 0,
+    "command": [
+      "node",
+      "node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--target",
+      "es2023",
+      "--module",
+      "esnext",
+      "--moduleResolution",
+      "bundler",
+      "--skipLibCheck",
+      "--strict",
+      "src/components/graphBandDraft.ts",
+      "src/lib/editorDocument.ts",
+      "src/lib/eq.ts",
+      "src/lib/workspace.ts"
+    ],
+    "log": "/tmp/jev-repo-author-foosheq/validation/group-graph-gesture/typecheck.log"
+  },
+  "semanticMutationChecks": [
+    {
+      "task": "group-graph-gesture",
+      "mutation": "independent-upper-clamps",
+      "sourcePath": "src/components/graphBandDraft.ts",
+      "exitCode": 1,
+      "summary": "Tests  3 failed | 12 passed (15)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/group-graph-gesture/independent-upper-clamps.log"
+    },
+    {
+      "task": "group-graph-gesture",
+      "mutation": "incremental-deltas",
+      "sourcePath": "src/components/graphBandDraft.ts",
+      "exitCode": 1,
+      "summary": "Tests  1 failed | 14 passed (15)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/group-graph-gesture/incremental-deltas.log"
+    },
+    {
+      "task": "group-graph-gesture",
+      "mutation": "overwrite-conflicts",
+      "sourcePath": "src/components/graphBandDraft.ts",
+      "exitCode": 1,
+      "summary": "Tests  2 failed | 13 passed (15)",
+      "log": "/tmp/jev-repo-author-foosheq/mutations/group-graph-gesture/overwrite-conflicts.log"
+    }
+  ]
+}

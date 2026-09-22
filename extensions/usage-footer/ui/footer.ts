@@ -15,6 +15,7 @@ export interface FooterViewModel {
 	contextTokens?: number;
 	contextWindowTokens?: number;
 	branch?: string | null;
+	repoName?: string;
 	git?: { insertions: number; deletions: number };
 	host?: HostTelemetrySnapshot;
 	cost: Pick<SessionCostSummary, "reported" | "estimated" | "hasReportedUsage" | "hasEstimatedUsage" | "hasUnpricedUsage">;
@@ -116,7 +117,8 @@ export function renderFooterLines(view: FooterViewModel, width: number, theme: T
 	const contextUsed = view.contextTokens === undefined ? "?" : tokens(view.contextTokens);
 	const contextTotal = view.contextWindowTokens === undefined ? "?" : tokens(view.contextWindowTokens);
 	const context = theme.fg("dim", `Ctx: ${contextUsed}/${contextTotal}`);
-	const branch = view.branch ? theme.fg("syntaxKeyword", `⎇ ${view.branch}`) : "";
+	const gitLabel = [view.repoName, view.branch].filter(Boolean).join("/");
+	const branch = gitLabel ? theme.fg("syntaxKeyword", `⎇ ${gitLabel}`) : "";
 	const diff = view.git && (view.git.insertions || view.git.deletions) ? theme.fg("warning", `(+${view.git.insertions},-${view.git.deletions})`) : "";
 	const percent = (label: string, value: number | undefined) => value === undefined ? "" : theme.fg("dim", `${label}: ${Math.round(value)}%`);
 	const activeAgents = (count: number) => `\x1b[1;92m${count}\x1b[22;39m`;

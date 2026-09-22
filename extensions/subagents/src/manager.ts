@@ -42,7 +42,6 @@ import {
   SendError,
   SpawnError,
 } from "./domain.ts";
-import { providerPolicyViolation } from "./provider-policy.ts";
 
 export const MAX_RUNNING = 16;
 export const MAX_TRACKED = 64;
@@ -456,13 +455,6 @@ const makeManager = Effect.gen(function* () {
             return new SpawnError({
               message: "Subagent manager is shutting down.",
             });
-          }
-          const policyViolation = providerPolicyViolation(
-            backendName,
-            task.parent.inheritedModel?.provider,
-          );
-          if (policyViolation) {
-            return new SpawnError({ message: policyViolation });
           }
           if (runningCount() + reserved >= MAX_RUNNING) {
             return new ConcurrencyLimitError({

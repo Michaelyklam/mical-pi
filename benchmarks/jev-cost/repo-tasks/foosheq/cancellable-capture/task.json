@@ -1,0 +1,46 @@
+{
+  "id": "cancellable-capture",
+  "repo": "foosheq",
+  "split": "calibration",
+  "kind": "feature",
+  "prompt": "Add cancellable, staged device capture to Foosheq's read-only editor model. This is a feature request. Preserve all current HID safety checks and existing tests. No UI implementation, hardware access, new commands, automatic transport retries or device enumeration is allowed.\n\nExtend readDeviceProfile(onProgress?, options?: {signal?: AbortSignal}) in src/lib/device.ts. A pre-aborted call rejects with signal.reason when it is an Error (otherwise an Error explaining the read stopped), without requesting a chooser or opening a handle. An un-aborted call still invokes requestDevice synchronously, before any await or progress callback. Cancellation must work while the chooser, open, send/reply, progress callback, or successful close is pending. Use the same abort reason rule for in-flight cancellation. Reject promptly during chooser/open/send; successful close must still finish (bounded by the existing close deadline) before the cancelled call settles. Cancellation during close must not return a snapshot. Never close a handle this call did not open. A late chooser result must not open; a late open must be closed; late promise rejection must be observed. Remove external abort and HID listeners on every exit. The global busy guard is released after cancellation cleanup. Retain the existing two-pass verification, exact decoding and read-only packet allowlist.\n\nAdd src/lib/deviceCapture.ts exporting createDeviceCapture(reader = readDeviceProfile). Reader has the extended function signature above. The returned controller exposes getState(), start(), cancel(), apply(history), dismiss(). State is {status:\"idle\"|\"reading\"|\"ready\"|\"error\",progress:string,snapshot:DeviceSnapshot|null,error:string}. getState returns detached data. start synchronously invokes reader with a fresh AbortSignal, clears stale data, and returns a Promise<void> that resolves on success, failure or cancellation and never rejects (reader failure becomes error state). A second start while reading is a no-op and must not call reader again. Progress belongs only to that start. Success stages a detached snapshot in ready state; it must not change workspace history or storage. Failure sets error with the thrown Error message, or \"Device read failed.\" for non-Error values.\n\ncancel aborts an active read, resets to idle immediately, and invalidates all progress/completion callbacks from that generation even if the reader ignores abort. It also clears a ready/error state. A fresh controller start may follow immediately; stale settlement cannot overwrite it. The default reader still owns its transport busy guard; do not bypass that guard. dismiss has the same behavior. apply(history) returns the same history unless a snapshot is ready and history has no active checkpoint. If a transaction is open, retain the ready snapshot so the user can retry after it ends. Otherwise import the snapshot profile with all eight slots explicitly visible through existing editor/history helpers, as one ordinary undoable set. Do not round fixed-point data. Consume ready state after applying, even for a no-op profile. Undo must restore previous slot membership. No controller action should read/write localStorage or call any HID API except through the injected/default reader.\n",
+  "visibleTestCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--configLoader",
+    "runner",
+    "--config",
+    "vitest.config.ts",
+    "src/lib/eq.test.ts",
+    "src/lib/editorDocument.test.ts",
+    "src/lib/workspace.test.ts",
+    "src/lib/device.test.ts",
+    "src/lib/device.capture.test.ts"
+  ],
+  "hiddenTestCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--configLoader",
+    "runner",
+    "--config",
+    "vitest.config.ts",
+    "src/lib/eq.test.ts",
+    "src/lib/editorDocument.test.ts",
+    "src/lib/workspace.test.ts",
+    "src/lib/device.test.ts",
+    "src/lib/device.capture.test.ts",
+    "src/lib/deviceCapture.hidden.test.ts"
+  ],
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "notes": {
+    "difficulty": "hard",
+    "sourceRoot": "apps/foosheq",
+    "dependencies": [
+      "vitest (existing tests use Vitest; no browser runner required)"
+    ],
+    "isolation": "Expose only baseline and prompt to the model. Overlay hidden only for grading. Never expose reference, review.md or validation logs. All device and storage interactions in tests are mocks. No package installation or network needed.",
+    "sanitization": "Allowlisted committed source and existing tests only. No .git, environment files, deployment files, credentials, node_modules or private service URLs. Source bytes unchanged."
+  }
+}

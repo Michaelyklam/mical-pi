@@ -1,0 +1,42 @@
+{
+  "id": "durable-history",
+  "repo": "foosheq",
+  "split": "calibration",
+  "kind": "feature",
+  "prompt": "Add durable undo/redo sessions for the editor, without changing existing profile-only storage APIs. This is a new feature, not a claimed production defect. Work only on the selected TypeScript model modules; no UI or browser automation is needed.\n\n1. Extend HistoryAction/historyReducer in src/lib/workspace.ts with {type:\"cancel\"}. With an open transaction, cancel restores a detached checkpoint as present, clears checkpoint, preserves past and future, and adds no undo entry. Without a checkpoint it returns the original state. Existing end/undo/redo behavior stays compatible.\n2. Export parseEditorProfileStrict(text) from src/lib/editorDocument.ts. It uses existing strict profile validation. An absent editor field remains a legacy profile. If editor is present, reject null, non-objects, unsupported version, non-array membership, duplicate IDs, non-integer IDs or IDs outside 1..8. Valid membership uses existing normalization (sorted IDs and enabled bands cannot be hidden). Unknown extra fields remain inert. Keep parseEditorProfile's tolerant behavior unchanged.\n3. Add src/lib/workspaceSession.ts exporting HISTORY_KEY = \"foosh.history.v1\", serializeHistory(history): string, parseHistory(text): History, readHistory(storage?): History, persistHistory(history, storage?): boolean. Optional storage is a getItem/setItem-compatible injected object; otherwise use global localStorage. The JSON schema is {version:1,history:{past:[editor profile envelopes],present:editor profile envelope,future:[editor profile envelopes]}}. Use the existing v1 profile/editor envelope for each entry, not raw Profile objects. Never serialize checkpoint. If a transaction is open, serialize the cancelled state, so a reload restores the last committed document and its redo branch. Do not mutate the supplied history.\n4. Validate the entire session before accepting or writing it. Each history stack may have at most 80 entries and their combined length must be at most 80. Reject malformed members, invalid profiles, malformed editor metadata, wrong session version, non-array stacks, a missing present, and any checkpoint property inside the persisted history object. parseHistory accepts at most 1 MiB of UTF-8 JSON, including surrounding whitespace. serializeHistory must enforce the same size bound and return only schema fields. Preserve numeric precision, IDs, order of history entries, and visible-but-bypassed bands. The returned history is detached and checkpoint is null.\n5. readHistory prefers a valid session. If the session is absent, corrupt or inaccessible, try the legacy WORKSPACE_KEY profile with the existing tolerant editor parser; otherwise return createHistory(emptyEditorDocument()). Reading must not write, remove or migrate any key. persistHistory validates first, writes HISTORY_KEY exactly once on success, returns false on validation/storage failure and never writes WORKSPACE_KEY, settings or presets. Existing source tests must continue to pass.\n",
+  "visibleTestCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--configLoader",
+    "runner",
+    "--config",
+    "vitest.config.ts",
+    "src/lib/eq.test.ts",
+    "src/lib/editorDocument.test.ts",
+    "src/lib/workspace.test.ts"
+  ],
+  "hiddenTestCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--configLoader",
+    "runner",
+    "--config",
+    "vitest.config.ts",
+    "src/lib/eq.test.ts",
+    "src/lib/editorDocument.test.ts",
+    "src/lib/workspace.test.ts",
+    "src/lib/workspaceSession.hidden.test.ts"
+  ],
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "notes": {
+    "difficulty": "moderate",
+    "sourceRoot": "apps/foosheq",
+    "dependencies": [
+      "vitest (existing tests use Vitest; no browser runner required)"
+    ],
+    "isolation": "Expose only baseline and prompt to the model. Overlay hidden only for grading. Never expose reference, review.md or validation logs. All device and storage interactions in tests are mocks. No package installation or network needed.",
+    "sanitization": "Allowlisted committed source and existing tests only. No .git, environment files, deployment files, credentials, node_modules or private service URLs. Source bytes unchanged."
+  }
+}

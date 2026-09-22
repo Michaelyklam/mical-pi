@@ -128,6 +128,8 @@ async function host(t: TestContext, options: { flags?: Record<string, any>; excl
 	const steps: Step[] = [];
 	/** Messages Pi queues while the agent runs; Pi appends them at the end of the turn (turn_end). */
 	const pending: any[] = [];
+	/** Messages Pi holds for the NEXT prompt (`deliverAs: "nextTurn"`), injected right after it. */
+	const nextTurn: any[] = [];
 	let activeTools: string[] | undefined;
 	let tokens = START;
 	/** Pi's `isStreaming` is true for the whole agent run. */
@@ -148,7 +150,8 @@ async function host(t: TestContext, options: { flags?: Record<string, any>; excl
 	// its result, so Pi defers it to the end of the turn; otherwise the message lands immediately.
 	loaded.runtime.sendMessage = (message: any, sendOptions: any) => {
 		sent.push({ ...message, options: sendOptions });
-		if (streaming) pending.push(message);
+		if (sendOptions?.deliverAs === "nextTurn") nextTurn.push(message);
+		else if (streaming) pending.push(message);
 		else appendCustomMessage(message);
 	};
 
@@ -175,7 +178,8 @@ async function host(t: TestContext, options: { flags?: Record<string, any>; excl
 		sessionManager: { getBranch: () => entries, buildContextEntries: () => entries },
 		getContextUsage: () => ({ tokens, contextWindow: WINDOW, percent: (tokens / WINDOW) * 100 }),
 		isIdle: () => !streaming,
-		compact: () => {},
+		requestCompaction: () => {},
+		abortCompaction: () => {},
 		ui: { notify: (message: string, type: string) => notices.push({ message, type }), select: async () => undefined, setStatus() {}, setFooter() {} },
 		modelRegistry: { complete: async () => { throw new Error("no provider calls in this test"); } },
 	};
@@ -241,6 +245,21 @@ async function host(t: TestContext, options: { flags?: Record<string, any>; excl
 		return step;
 	};
 
+	/** One real user prompt: Pi fires `input`, journals the user message, then injects queued `nextTurn` messages. */
+	const prompt = async (text: string): Promise<void> => {
+		const result = await emit("input", { text, source: "interactive" });
+		assert.notEqual(result?.action, "handled", "the extension must never swallow a user prompt");
+		sequence += 1;
+		entries.push({
+			type: "message",
+			id: `e${sequence}`,
+			parentId: entries.at(-1)?.id ?? null,
+			timestamp: new Date().toISOString(),
+			message: { role: "user", content: text, timestamp: Date.now() },
+		});
+		while (nextTurn.length > 0) appendCustomMessage(nextTurn.shift()!);
+	};
+
 	return {
 		extension,
 		ctx,
@@ -250,6 +269,8 @@ async function host(t: TestContext, options: { flags?: Record<string, any>; excl
 		steps,
 		emit,
 		runTurn,
+		request,
+		prompt,
 		runTurns: async (count: number) => {
 			for (let i = 0; i < count; i++) await runTurn();
 		},
@@ -259,6 +280,8 @@ async function host(t: TestContext, options: { flags?: Record<string, any>; excl
 		},
 		hookRewrites: () => steps.filter((step) => step.hookRewrote).length,
 		guidance: () => sent.filter((message) => message.customType === GUIDANCE && THRESHOLD_KEYS.has(message.details?.key)).map((message) => String(message.content)),
+		/** Deferred compaction requests (delivered with the next user prompt). */
+		nextRequests: () => sent.filter((message) => message.customType === GUIDANCE && message.details?.key === "next-request"),
 		nudges: () => sent.filter((message) => message.customType === GUIDANCE && !THRESHOLD_KEYS.has(message.details?.key)),
 		endRun: async () => {
 			streaming = false;
@@ -324,17 +347,19 @@ test("resume/reload re-announces nothing: the persisted guidance is not duplicat
 	assertAppendOnly(h.payloads(), "after a reload");
 });
 
-test("the idle nudge is appended to the end of the transcript, never spliced into history", async (t) => {
+test("ending a task and starting another preserves the prefix without a compaction gate", async (t) => {
 	const h = await host(t);
-	await h.runTurns(10); // crosses the notice line
-	h.setUsage(250_000); // the nudge is for the warning phase and above
+	await h.runTurns(10);
+	const before = h.payloads().length;
+	h.setUsage(250_000);
 	await h.endRun();
-	const nudge = h.nudges();
-	assert.equal(nudge.length, 1, "one idle nudge is sent once the run ends above the warning line");
-	assert.equal(nudge[0]!.details.key, "now");
-	assert.equal(nudge[0]!.options.deliverAs, "followUp");
-
-	await h.runTurns(5);
-	assertAppendOnly(h.payloads(), "after the idle nudge");
-	assert.equal(h.payloads().at(-1)!.filter((block) => block.includes("Compact now")).length, 1, "the nudge stays exactly once, at its original position");
+	assert.equal(h.payloads().length, before, "no extra model turn at task end");
+	await h.prompt("next task please");
+	await h.request();
+	assertAppendOnly(h.payloads(), "next user request");
+	assert.equal(h.payloads().at(-1)!.at(-1), "user:next task please");
+	assert.equal(h.nextRequests().length, 0, "no forced next-request compaction");
+	assert.ok(h.sent.every(m => m.options.triggerTurn === false));
+	await h.runTurns(2);
+	assertAppendOnly(h.payloads(), "after more turns");
 });

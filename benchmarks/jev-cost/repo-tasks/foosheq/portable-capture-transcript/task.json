@@ -1,0 +1,42 @@
+{
+  "id": "portable-capture-transcript",
+  "repo": "foosheq",
+  "split": "evaluation",
+  "kind": "feature",
+  "prompt": "Add an offline, portable raw-capture transcript to the read-only Protocol Micro subsystem. This is a feature request for reproducible support reports, not an instruction to contact hardware. All validation must be pure or exercised with mocks. Preserve existing readDeviceProfile behavior and all source tests.\n\nAdd src/lib/deviceTranscript.ts exporting types CaptureTranscript and CaptureRecord and functions verifyCaptureTranscript(transcript): DeviceSnapshot, serializeCaptureTranscript(transcript): string, parseCaptureTranscript(text): CaptureTranscript. A transcript is {version:1,device:{vendorId:13058,productId:49679,productName:\"Protocol Micro\"},readAt:string,records:CaptureRecord[]}. A record is {reportId:75,request:number[],response:number[]}. readAt must be a canonical UTC ISO timestamp (new Date(readAt).toISOString() equals the original), not the replay time. Require exactly 20 records in the current two-pass request order: firmware, filters 0..7, global, repeated. Requests must exactly equal the existing read-only allowlist bytes, with no extra bytes. Response arrays must be dense integer bytes (0..255), meet decoder minimum lengths and contain at most 64 bytes excluding report ID. Require matching opcode, command and filter index; reject out-of-order, missing, duplicate, write, wrong-report and uncorrelated records. Do not accept unsolicited reports as substitutes.\n\nReplay must use the same pure decoding and complete-snapshot verification rules as live capture: firmware 0.2 twice, matching exact per-band frequency/Q/gain and global gain across passes, peak type only, raw fixed-point precision, final editor range validation, and slot always null. Ignore unused firmware tails, coefficients and padding when comparing passes, but preserve raw bytes in the transcript. Replay must never inspect navigator, open/close a device or use storage. Factor shared decoding/verification into a pure module rather than maintaining a second copy of the protocol rules; keep __deviceTest compatible for existing tests.\n\nParsing/serialization validate all input before returning, copy/project only the documented schema fields (drop unknown extras), reject invalid values without clamping and return detached arrays. JSON is limited to 32 KiB UTF-8 including whitespace on parse; serialization enforces the same bound. These functions verify the capture, rather than merely checking JSON shape.\n\nIn src/lib/device.ts add readDeviceCapture(onProgress?) returning Promise<{snapshot:DeviceSnapshot,transcript:CaptureTranscript}>. It shares the existing concurrency guard, synchronous chooser semantics, listener cleanup, deadlines and close-before-success requirements with readDeviceProfile. Record only the first accepted correlated response for each successfully completed request, copied from the DataView's own byte range (not the entire backing buffer). Ignore unrelated and duplicate events and do not expose partially verified transcripts. Snapshot and transcript must be detached from mutable incoming report buffers. Use one readAt for both results. readDeviceProfile remains source-compatible and returns only the snapshot. No arbitrary sender or write API may be exposed. The returned transcript must verify to the returned snapshot and survive serialize/parse/replay offline.\n",
+  "visibleTestCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--configLoader",
+    "runner",
+    "--config",
+    "vitest.config.ts",
+    "src/lib/eq.test.ts",
+    "src/lib/device.test.ts",
+    "src/lib/device.capture.test.ts"
+  ],
+  "hiddenTestCommand": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--configLoader",
+    "runner",
+    "--config",
+    "vitest.config.ts",
+    "src/lib/eq.test.ts",
+    "src/lib/device.test.ts",
+    "src/lib/device.capture.test.ts",
+    "src/lib/deviceTranscript.hidden.test.ts"
+  ],
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "notes": {
+    "difficulty": "hard",
+    "sourceRoot": "apps/foosheq",
+    "dependencies": [
+      "vitest (existing tests use Vitest; no browser runner required)"
+    ],
+    "isolation": "Expose only baseline and prompt to the model. Overlay hidden only for grading. Never expose reference, review.md or validation logs. All device and storage interactions in tests are mocks. No package installation or network needed.",
+    "sanitization": "Allowlisted committed source and existing tests only. No .git, environment files, deployment files, credentials, node_modules or private service URLs. Source bytes unchanged."
+  }
+}

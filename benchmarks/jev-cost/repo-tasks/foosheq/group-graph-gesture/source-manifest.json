@@ -1,0 +1,58 @@
+{
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "sourceRoot": "apps/foosheq",
+  "files": [
+    {
+      "path": "src/components/graphBandDraft.test.ts",
+      "sha256": "ba4a53985968f22a73768ea0001d0b02965ebb68bf4c6a07dbf4d0a70dec0654",
+      "bytes": 3179,
+      "lines": 93
+    },
+    {
+      "path": "src/components/graphBandDraft.ts",
+      "sha256": "d1d3ebb3fd27f669f0541b81bc3feeb5016ea8c76b2f70ae90f673ecfed0ce84",
+      "bytes": 2320,
+      "lines": 80
+    },
+    {
+      "path": "src/lib/editorDocument.test.ts",
+      "sha256": "03b72259fad1aaa7389063c3441f8f1ef54c097cc3d1a7382a59a44322d7023e",
+      "bytes": 7836,
+      "lines": 224
+    },
+    {
+      "path": "src/lib/editorDocument.ts",
+      "sha256": "90dd57e3581976bf7fa4cbe60446a8083e7d26b12c3bea6cc523c3d2bffeec44",
+      "bytes": 3680,
+      "lines": 126
+    },
+    {
+      "path": "src/lib/eq.test.ts",
+      "sha256": "4abf325f0bf234a85c9e2e93c23278c1a8a642386d76d745ee0fd6c2ff50120a",
+      "bytes": 27037,
+      "lines": 886
+    },
+    {
+      "path": "src/lib/eq.ts",
+      "sha256": "c57fc83cf2b85c2f708c571267408458479e3367883361b6f3ab41fc45ad1af5",
+      "bytes": 14823,
+      "lines": 523
+    },
+    {
+      "path": "src/lib/workspace.test.ts",
+      "sha256": "dd1c11e78bc9d67a4fb8f4cd4deb36fe08da8f11ba7809b7ed68c533e430accf",
+      "bytes": 26963,
+      "lines": 822
+    },
+    {
+      "path": "src/lib/workspace.ts",
+      "sha256": "3ce78082982c3856a040a6ef52d384882ab8b284f9f92909fcefe58f63fcdba1",
+      "bytes": 4576,
+      "lines": 177
+    }
+  ],
+  "authoredBaselineFiles": [
+    "package.json",
+    "vitest.config.ts"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "node": "v22.23.2",
+  "offline": true,
+  "referenceHiddenRepeatRuns": 5,
+  "referenceHiddenRepeatAllPassed": true,
+  "results": [
+    {
+      "variant": "baseline",
+      "suite": "visible",
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    {
+      "variant": "baseline",
+      "suite": "hidden",
+      "tests": 7,
+      "pass": 2,
+      "fail": 5,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    {
+      "variant": "reference",
+      "suite": "visible",
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    {
+      "variant": "reference",
+      "suite": "hidden",
+      "tests": 7,
+      "pass": 7,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
+  ]
+}

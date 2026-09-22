@@ -1,0 +1,70 @@
+{
+  "sourceRevision": "b8c6e9bd5ecd6c5620cf7bce82329bcf0e801b10",
+  "sourceRoot": "apps/foosheq",
+  "files": [
+    {
+      "path": "src/lib/device.capture.test.ts",
+      "sha256": "d66dbe1b7a41b9b8e1dcfa04088a72ea2bfab20989f868940c132132ec6b51a3",
+      "bytes": 1936,
+      "lines": 55
+    },
+    {
+      "path": "src/lib/device.test.ts",
+      "sha256": "092ced873474d01e7b5318e93e3da1bb61ed8d220161a2839033bb044cbba2e3",
+      "bytes": 34577,
+      "lines": 1089
+    },
+    {
+      "path": "src/lib/device.ts",
+      "sha256": "dc35646dfd56ab5894b35a5ccfa2fda8b4015b44daee07a95f2961d46db0d4dd",
+      "bytes": 15980,
+      "lines": 486
+    },
+    {
+      "path": "src/lib/editorDocument.test.ts",
+      "sha256": "03b72259fad1aaa7389063c3441f8f1ef54c097cc3d1a7382a59a44322d7023e",
+      "bytes": 7836,
+      "lines": 224
+    },
+    {
+      "path": "src/lib/editorDocument.ts",
+      "sha256": "90dd57e3581976bf7fa4cbe60446a8083e7d26b12c3bea6cc523c3d2bffeec44",
+      "bytes": 3680,
+      "lines": 126
+    },
+    {
+      "path": "src/lib/eq.test.ts",
+      "sha256": "4abf325f0bf234a85c9e2e93c23278c1a8a642386d76d745ee0fd6c2ff50120a",
+      "bytes": 27037,
+      "lines": 886
+    },
+    {
+      "path": "src/lib/eq.ts",
+      "sha256": "c57fc83cf2b85c2f708c571267408458479e3367883361b6f3ab41fc45ad1af5",
+      "bytes": 14823,
+      "lines": 523
+    },
+    {
+      "path": "src/lib/fixtures/protocol-micro-0.2.json",
+      "sha256": "2a9ef1292ad5a3e03b00fcc4c1c133214260131a682e8342da120b8885d11c71",
+      "bytes": 2760,
+      "lines": 28
+    },
+    {
+      "path": "src/lib/workspace.test.ts",
+      "sha256": "dd1c11e78bc9d67a4fb8f4cd4deb36fe08da8f11ba7809b7ed68c533e430accf",
+      "bytes": 26963,
+      "lines": 822
+    },
+    {
+      "path": "src/lib/workspace.ts",
+      "sha256": "3ce78082982c3856a040a6ef52d384882ab8b284f9f92909fcefe58f63fcdba1",
+      "bytes": 4576,
+      "lines": 177
+    }
+  ],
+  "authoredBaselineFiles": [
+    "package.json",
+    "vitest.config.ts"
+  ]
+}

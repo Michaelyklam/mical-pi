@@ -1,0 +1,26 @@
+{
+  "id": "cancellable-workflow-handles",
+  "repo": "mical-pi",
+  "split": "evaluation",
+  "kind": "feature",
+  "prompt": "Add per-invocation cancellation to workflow agent() handles in the existing permission-restricted sandbox. Today these lazy thenables can only be stopped by cancelling the entire workflow. Extend them with cancel(reason?: string): boolean without exposing host objects, timers, AbortController, process, or new permissions in the VM. This is a feature request.\n\nRequirements:\n* cancel returns true only for the first cancellation before the handle has observed a settled result; subsequent cancellation and cancellation after settlement return false. Keep then/catch/finally and repeated awaits working, with exactly one host invocation per started handle.\n* A canceled handle resolves (does not reject) to {ok:false, output:\"\", error:<reason>}. Use a nonempty string reason truncated to 1024 UTF-16 code units, otherwise \"Agent was cancelled\". All consumers receive the same outcome. Cancellation before consumption must never invoke onAgent, and must remove the handle from unconsumed bookkeeping. A canceled handle may be ignored without causing the workflow's orphan/in-flight checks to fail. Noncanceled orphan detection remains unchanged.\n* Once started, cancel must send an authenticated per-request cancellation through the existing IPC bridge. The parent aborts only that request's signal with an Error whose message is the normalized reason. Remove it from active delivery bookkeeping BEFORE firing abort listeners. Cancellation must resolve the handle promptly even if onAgent ignores abort forever; late success or rejection must not overwrite the canceled outcome or produce unhandled rejections. A result already observed by the handle wins over later cancel. Do not cancel sibling handles or the run signal.\n* Use a child-to-parent IPC message {token, kind:\"cancelAgent\", id, reason}, with id and reason as top-level fields. The token is the existing per-run token. The parent must validate cancellation IDs as positive safe integers previously issued in this workflow and validate reason as a nonempty string of at most 1024 code units. Malformed or unknown IDs are protocol errors. Duplicate cancellation or cancellation after completion for a known ID is harmless. Cancellation does not refund the 128-request budget. Never send a second result for a canceled request.\n* Preserve whole-workflow cleanup, source/result limits, permission restrictions, lazy dispatch, and parallel concurrency. Synchronous onAgent throws must become ordinary failed agent outcomes rather than escaping the IPC callback. The signal must remain compatible with RunController.schedule's invocationSignal, including queued cancellation and subsequent scheduling.\n\nUse the existing sandbox.ts parent, sandbox-child.cjs VM/IPC bridge, serialization.ts and controller.ts context. Tests must use fake onAgent callbacks, never real agents or providers. Existing tests must pass.",
+  "visibleTestCommand": [
+    "node",
+    "--import",
+    "tsx",
+    "--test",
+    "extensions/workflows/sandbox.test.ts",
+    "extensions/workflows/serialization.test.ts",
+    "extensions/workflows/controller.test.ts"
+  ],
+  "hiddenRoot": "hidden",
+  "hiddenTestCommand": [
+    "node",
+    "--import",
+    "tsx",
+    "--test",
+    "hidden/feature.test.ts"
+  ],
+  "sourceRevision": "503adb5f944d3443d3e82f2c337c3a6f0d9e5d41",
+  "notes": "Run commands from the baseline workspace root. Copy hidden/ there only after completion. Overlay reference/ only for trusted author validation. Offline; tsx is supplied by the parent dependency mount."
+}
