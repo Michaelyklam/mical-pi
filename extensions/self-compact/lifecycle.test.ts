@@ -87,7 +87,11 @@ async function setup(t: TestContext, overrides: { complete?: any; streamSimple?:
 	const { session, extensionsResult } = await createAgentSession({ cwd, agentDir, model, modelRuntime: runtime, sessionManager: sm, settingsManager, resourceLoader: resources, tools: ["self_compact", "view_context", "finish_phase", ...(overrides.tools ?? [])], thinkingLevel: "off" });
 	assert.deepEqual(extensionsResult.errors, []);
 	await session.bindExtensions({ mode: "print", onError: (e: any) => errors.push(e) });
-	if (overrides.stopAfterTurn) (session as any).agent.shouldStopAfterTurn = () => true;
+	if (overrides.stopAfterTurn) {
+		// Pi 0.87 replaced shouldStopAfterTurn with finishTurn decisions; keep the session's own boundary hook.
+		const agent = (session as any).agent, previous = agent.finishTurn;
+		agent.finishTurn = async (turn: any, signal: any) => { await previous?.(turn, signal); return { action: "end" }; };
+	}
 	session.subscribe((e: any) => { events.push(e); trace.push(e.type); });
 	t.after(async () => { finish.resolve(); await session.abort(); session.dispose(); rmSync(cwd, { recursive: true, force: true }); });
 	return { session, sm, cwd, events, contexts, trace, errors, started, finish };
@@ -174,6 +178,21 @@ test("a stalled session_compact listener registered before self-compact cannot d
 	const state = (h.sm.getBranch().filter(e => (e as any).customType === STATE_TYPE).at(-1) as any)?.data;
 	assert.notEqual(state.handoff.status, "failed");
 	assert.equal(h.events.filter(e => e.type === "agent_settled").length, 1);
+});
+
+test("the summary request carries only the self-compact system prompt and instructions, not Pi's defaults", { timeout: 10_000 }, async t => {
+	const requests: any[] = [];
+	const h = await setup(t, { complete: async (_model: any, context: any) => { requests.push(structuredClone(context)); return response([{ type: "text", text: "Checkpoint summary." }]); } });
+	await h.session.compact("Preserve decisions.");
+	assert.ok(requests.length >= 1);
+	for (const request of requests) {
+		assert.ok(request.systemPrompt && !request.systemPrompt.startsWith("You are a context summarization assistant"), "the extension's system prompt replaces Pi's");
+		assert.deepEqual(request.messages.filter((m: any) => m.role === "system"), [], "Pi 0.87's folded system message must not reach the provider alongside ours");
+		const text = JSON.stringify(request.messages);
+		assert.ok(text.includes("Summarize the supplied historical data"), "self-compact instructions replace Pi's");
+		assert.ok(text.includes("Preserve decisions."), "operator instructions are forwarded");
+	}
+	assert.equal(h.sm.getBranch().filter(e => e.type === "compaction").length, 1);
 });
 
 test("a scripted summary failure on manual compaction preserves its cause and stays distinct from cancellation", { timeout: 10_000 }, async t => {

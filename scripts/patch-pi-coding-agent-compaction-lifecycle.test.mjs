@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
-import { patchSource, patchPackage, installRoots, MARKER, PRIOR_MARKERS } from './patch-pi-coding-agent-compaction-lifecycle.mjs';
+import { patchSource, patchPackage, installRoots, MARKER, PRIOR_MARKERS, SUPPORTED_PI_VERSION } from './patch-pi-coding-agent-compaction-lifecycle.mjs';
 
 const dist = dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent')));
 const original = readFileSync(join(dist, 'core/agent-session.js'), 'utf8');
@@ -41,10 +41,62 @@ function session() {
     _getSummarizationRequestAuth: async model => ({ model }),
     abortRetry() {},
     _runDefaultCompaction: async prep => ({ summary: 'Summary', firstKeptEntryId: prep.firstKeptEntryId, tokensBefore: prep.tokensBefore }),
-    _pendingCustomMessages: [],
+    _pendingCustomMessages: [], _deferredSettledActions: [], _entryIdsByMessage: new Map(),
   });
   return { s, sm, events };
 }
+
+test('the dev copy under test is the Pi version the patch supports', () => {
+  const manifest = JSON.parse(readFileSync(join(dist, '../package.json'), 'utf8'));
+  assert.equal(manifest.version, SUPPORTED_PI_VERSION, 'bump the pinned devDependency and re-port the patch together');
+});
+
+test('manual compaction during an active run neither waits on itself nor strands idle waiters', async () => {
+  const { s } = session(); const started = deferred(), finish = deferred();
+  s._isAgentRunActive = true;
+  s.agent.abort = () => { queueMicrotask(() => s._emitAgentSettled()); };
+  s._runDefaultCompaction = async prep => { started.resolve(); await finish.promise; return { summary: 'Manual', firstKeptEntryId: prep.firstKeptEntryId, tokensBefore: prep.tokensBefore }; };
+  const compact = s.compact(); await started.promise;
+  assert.equal(s.isIdle, false, 'Pi 0.87 counts compaction as busy');
+  let idle = false; const waiting = s.waitForIdle().then(() => idle = true);
+  await new Promise(r => setImmediate(r));
+  assert.equal(idle, false);
+  finish.resolve(); await compact; await waiting;
+  assert.equal(idle, true);
+});
+
+test('commit refreshes the finalized context through the session projection', async () => {
+  const { s, sm } = session();
+  const result = await s.compact();
+  assert.equal(s.agent.state.messages[0].role, 'compactionSummary');
+  assert.deepEqual(s.agent.state.messages, sm.buildSessionProjection().messages);
+  assert.ok(s._entryIdsByMessage.has(s.agent.state.messages[0]), 'messages are mapped to their entries');
+  assert.equal(typeof result.estimatedTokensAfter, 'number');
+});
+
+test('auto compaction with nothing to compact stays silent like native Pi', async () => {
+  const { s, events } = session();
+  await s.compact();
+  events.length = 0;
+  assert.equal(await s._runAutoCompaction('threshold', false), false);
+  assert.deepEqual(events.filter(e => e.type.startsWith('compaction')), []);
+});
+
+test('actions deferred by settled handlers run once, after public settlement, and warm the cache once', async () => {
+  const { s, events } = session(); const order = []; let warmed = 0;
+  s._cacheWarmer = { onAgentSettled: () => warmed++ };
+  s._eventListeners.push(e => { if (e.type === 'agent_settled') order.push('public'); });
+  s._extensionRunner.emit = async e => {
+    if (e.type !== 'agent_settled') return;
+    assert.equal(s._isEmittingAgentSettled, true, 'prompts from settled handlers must be deferred');
+    s._deferredSettledActions.push(async () => order.push('deferred'));
+  };
+  await s._emitAgentSettled();
+  assert.deepEqual(order, ['public', 'deferred']);
+  assert.equal(s._isEmittingAgentSettled, false);
+  assert.equal(warmed, 1);
+  assert.equal(events.filter(e => e.type === 'agent_settled').length, 1);
+});
 
 test('source patch parses and is idempotent; unknown source fails', () => {
   assert.ok(patched.includes(MARKER));
@@ -269,7 +321,7 @@ function priorRevision(source) {
 
 function installRoot() {
   const root = mkdtempSync(join(tmpdir(), 'patch-upgrade-'));
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ version: '0.84.4' }));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ version: SUPPORTED_PI_VERSION }));
   mkdirSync(join(root, 'dist/core/extensions'), { recursive: true });
   mkdirSync(join(root, 'dist/bundle'), { recursive: true });
   return root;
@@ -336,6 +388,35 @@ test('a prior-revision install upgrades in place on SDK and bundle; the current 
   }
 });
 
+test('injected methods bind to the helper names the host module really declares (bundle renames)', async () => {
+  const { parse } = await import('acorn');
+  const found = [];
+  const walk = dir => { for (const e of readdirSync(dir, { withFileTypes: true })) { const f = join(dir, e.name); if (e.isDirectory()) walk(f); else if (e.name.endsWith('.js')) { const s = readFileSync(f, 'utf8'); if (s.includes('_compactBeforeNextAssistantResponse')) found.push(f); } } };
+  walk(join(dist, 'bundle'));
+  assert.ok(found.length > 0, 'the CLI bundle carries a session class');
+  for (const file of [join(dist, 'core/agent-session.js'), ...found]) {
+    const out = patchSource(readFileSync(file, 'utf8'));
+    const ast = parse(out, { ecmaVersion: 'latest', sourceType: 'module' });
+    const declared = new Set();
+    for (const n of ast.body) {
+      const d = n.type === 'ExportNamedDeclaration' && n.declaration ? n.declaration : n;
+      if (d.type === 'FunctionDeclaration') declared.add(d.id.name);
+      if (d.type === 'VariableDeclaration') for (const v of d.declarations) if (v.id.type === 'Identifier') declared.add(v.id.name);
+      if (d.type === 'ImportDeclaration') for (const s of d.specifiers) declared.add(s.local.name);
+    }
+    let cls;
+    const visit = n => { if (!n || typeof n !== 'object' || cls) return; if ((n.type === 'ClassDeclaration' || n.type === 'ClassExpression') && n.body.body.some(m => m.key?.name === '_compactSession')) { cls = n; return; } for (const v of Object.values(n)) Array.isArray(v) ? v.forEach(visit) : visit(v); };
+    visit(ast);
+    assert.ok(cls, `${file}: patched session class`);
+    for (const name of ['_compactSession', '_runAutoCompaction']) {
+      const body = out.slice(cls.body.body.find(m => m.key?.name === name).start, cls.body.body.find(m => m.key?.name === name).end);
+      for (const [, callee] of body.matchAll(/\b(prepareCompaction\w*|estimateMessagesTokens\w*)\(/g)) {
+        assert.ok(declared.has(callee), `${file.split('/').pop()}: ${name} calls ${callee}, which the module does not declare at top level`);
+      }
+    }
+  }
+});
+
 test('unknown versions and shapes fail clearly without partially rewriting a package', () => {
   const root = mkdtempSync(join(tmpdir(), 'patch-unknown-'));
   try {
@@ -345,7 +426,7 @@ test('unknown versions and shapes fail clearly without partially rewriting a pac
     writeFileSync(join(root, 'dist/core/extensions/runner.js'), 'export class ExtensionRunner {}');
     assert.throws(() => patchPackage(root), /Unsupported Pi 0\.9\.9/);
 
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ version: '0.84.4' }));
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ version: SUPPORTED_PI_VERSION }));
     const good = readFileSync(join(dist, 'core/agent-session.js'), 'utf8');
     writeFileSync(join(root, 'dist/core/agent-session.js'), good);
     writeFileSync(join(root, 'dist/core/extensions/runner.js'), 'export class Other {}');
@@ -398,6 +479,10 @@ export class AgentSession {
   async abort() {}
   get isCompacting() { return !!this._compactionAbortController; }
   async _emitAgentSettled() {}
+  _refreshFinalizedContext() {}
+  _resolveIdleWaitIfIdle() {}
+  abortBranchSummary() {}
+  _flushPendingCustomMessages() {}
 }`;
   const pristineRunner = `
 export class ExtensionRunner {

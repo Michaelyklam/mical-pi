@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import type { Context, Model } from "@earendil-works/pi-ai";
+import { normalizeContext, type Model } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { emptyCostTotals, accumulateCost, readReportedCost, REPORTED_COST_FIELD } from "./billing.ts";
 
@@ -52,7 +52,7 @@ async function streamUsage(usageJson: string, provider = "openrouter") {
 	const body = sseBody(usageJson);
 	const fetchImpl = async () =>
 		new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
-	const context: Context = { messages: [{ role: "user", content: "hi", timestamp: 1 }], tools: [] };
+	const context = normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }], tools: [] });
 	let message;
 	for await (const event of stream(model(provider), context, { apiKey: "test", fetch: fetchImpl })) {
 		if (event.type === "done") message = event.message;

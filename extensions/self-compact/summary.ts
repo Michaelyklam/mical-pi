@@ -57,6 +57,11 @@ function historyInput(messages: SessionBeforeCompactEvent["preparation"]["messag
 	return `<conversation>\n${conversation}\n</conversation>\n\n${previous ? `<previous-summary>\n${previous}\n</previous-summary>\n\n` : ""}`;
 }
 
+/** Pi 0.87 frames the split-turn prefix request with headings instead of tags. */
+function turnPrefixInput(messages: SessionBeforeCompactEvent["preparation"]["turnPrefixMessages"]): string {
+	return `# Conversation\n${serializeConversation(convertToLlm(messages))}\n\n# Instructions\n`;
+}
+
 function summaryInstructions(event: SessionBeforeCompactEvent, prompt: LoadedPrompt): string {
 	return [
 		"Summarize the supplied historical data. Do not continue the task, simulate tools, or claim actions without tool-result evidence. Keep pending actions pending.",
@@ -69,7 +74,9 @@ function summaryInstructions(event: SessionBeforeCompactEvent, prompt: LoadedPro
 /** Match complete known inputs, so tag-like text inside history cannot cut the conversation short. */
 function replaceInstructions(context: Context, inputs: string[], instructions: string, budgetChars: number) {
 	let truncated = false;
-	const messages = context.messages.map(message => {
+	// Pi 0.87 folds its summarization system prompt into a leading system message. Drop it so
+	// the extension's systemPrompt is the only one the provider sees.
+	const messages = context.messages.filter(message => (message.role as string) !== "system").map(message => {
 		if (message.role !== "user") return message;
 		const content = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
 		return {
@@ -92,7 +99,10 @@ function replaceInstructions(context: Context, inputs: string[], instructions: s
 /** Pi owns split turns, summary updates, file tracking and configured transport retries. */
 export async function generateSummary(event: SessionBeforeCompactEvent, ctx: ExtensionContext, system: LoadedPrompt, instructions: LoadedPrompt) {
 	if (!ctx.model) throw new Error("No model available for compaction.");
-	const inputs = [historyInput(event.preparation.messagesToSummarize, event.preparation.previousSummary), historyInput(event.preparation.turnPrefixMessages)].sort((a, b) => b.length - a.length);
+	const inputs = [
+		historyInput(event.preparation.messagesToSummarize, event.preparation.previousSummary),
+		turnPrefixInput(event.preparation.turnPrefixMessages),
+	].sort((a, b) => b.length - a.length);
 	const userInstructions = summaryInstructions(event, instructions);
 	let truncatedInput = false;
 	const result = await compact(

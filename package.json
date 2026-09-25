@@ -16,10 +16,10 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-agent-core": "0.87.1",
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1",
     "@types/node": "^22.10.0",
     "tsx": "^4.23.1",
     "typescript": "^5.6.3"
@@ -67,5 +67,8 @@
     "skills": [
       "./skills"
     ]
-  }
+  },
+  "bundleDependencies": [
+    "pi-unified-exec"
+  ]
 }

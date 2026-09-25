@@ -113,12 +113,13 @@ export class SessionCompactionMethods {
         const summarize = async () => {
           if (reason === "manual" && !options.withinRun) await this.abort(true);
           signal.throwIfAborted();
-          if (!this.model) throw new Error("No model selected for compaction.");
-          const auth = await this._getSummarizationRequestAuth(this.model);
+          const model = this.model;
+          if (!model) throw new Error("No model selected for compaction.");
+          const auth = await this._getSummarizationRequestAuth(model, signal);
           signal.throwIfAborted();
           const branchEntries = this.sessionManager.getBranch();
           const leaf = this.sessionManager.getLeafId();
-          const preparation = prepareCompaction(branchEntries, this.settingsManager.getCompactionSettings());
+          const preparation = prepareCompaction(branchEntries, this.settingsManager.getCompactionSettings(model));
           if (!preparation) throw new Error("Nothing to compact (session too small or already compacted).");
           const hook = this._extensionRunner.hasHandlers("session_before_compact")
             ? await this._extensionRunner.emit({
@@ -152,7 +153,8 @@ export class SessionCompactionMethods {
         if (this._compactionOperation !== operation) throw new Error("Compaction is no longer current.");
         const { summary, firstKeptEntryId, tokensBefore, details, usage } = result;
         this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, operation.fromExtension, usage);
-        this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+        // Pi 0.87: the session projection is the model's context; this also maps entry ids.
+        this._refreshFinalizedContext();
         outcome = {
           result: { ...result, estimatedTokensAfter: estimateMessagesTokens(this.agent.state.messages) },
           compactionEntry: this.sessionManager.getLeafEntry(),
@@ -180,7 +182,11 @@ export class SessionCompactionMethods {
   }
 
   _releaseCompaction(operation) {
-    if (this._compactionOperation === operation) this._compactionOperation = undefined;
+    if (this._compactionOperation !== operation) return;
+    this._compactionOperation = undefined;
+    // Pi 0.87 counts compaction as busy in isIdle; release idle waiters before notifying,
+    // as native compaction does, so compaction_end listeners can submit prompts.
+    this._resolveIdleWaitIfIdle();
   }
 
   /**
@@ -214,16 +220,14 @@ export class SessionCompactionMethods {
   async _runAutoCompaction(reason, willRetry) {
     // Never await our own operation from the post-run callback of a manual abort.
     if (this._compactionOperation || this._requestedCompaction) return false;
+    // Native auto-compaction is silent when there is nothing to compact.
+    const model = this.model;
+    if (!model || !prepareCompaction(this.sessionManager.getBranch(), this.settingsManager.getCompactionSettings(model))) return false;
     try {
       await this._compactSession(reason, willRetry);
-      if (willRetry) {
-        const messages = this.agent.state.messages;
-        const last = messages[messages.length - 1];
-        if (last?.role === "assistant" && (last.stopReason === "error" || last.stopReason === "length")) {
-          this.agent.state.messages = messages.slice(0, -1);
-        }
-        return true;
-      }
+      // Pi 0.87 omits the failed attempt from the projection (_omitRecoveryAttempt) before
+      // compaction, so the refreshed context is already continuable.
+      if (willRetry) return true;
       return this.agent.hasQueuedMessages();
     } catch {
       return false; // The outcome was already delivered by the session owner.
@@ -240,10 +244,27 @@ export class SessionCompactionMethods {
   }
 
   async abort(preserveCompaction = false) {
-    if (!preserveCompaction) this.abortCompaction();
+    if (this._isAgentRunActive) this._agentRunAbortRequested = true;
     this.abortRetry();
+    if (!preserveCompaction) this.abortCompaction();
+    this.abortBranchSummary();
+    if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
     this.agent.abort();
-    await this.waitForIdle();
+    // Manual compaction aborts the run from inside its own operation. isIdle includes
+    // isCompacting in Pi 0.87, so waiting for idle there would wait on itself.
+    if (preserveCompaction) await this._waitForAgentRunEnd();
+    else await this.waitForIdle();
+  }
+
+  _waitForAgentRunEnd() {
+    if (!this._isAgentRunActive) return Promise.resolve();
+    return new Promise(resolve => (this._agentRunEndWaiters = this._agentRunEndWaiters ?? []).push(resolve));
+  }
+
+  _resolveAgentRunEnd() {
+    const waiters = this._agentRunEndWaiters;
+    this._agentRunEndWaiters = undefined;
+    for (const resolve of waiters ?? []) resolve();
   }
 
   get isCompacting() {
@@ -263,6 +284,8 @@ export class SessionCompactionMethods {
    */
   async _emitAgentSettled() {
     this._isAgentRunActive = false;
+    this._resolveAgentRunEnd();
+    let owner = false;
     try {
       // A queued request whose run ended before the safe point settles here; it never
       // starts model work and never survives into the idle state.
@@ -273,17 +296,35 @@ export class SessionCompactionMethods {
       }
       const owed = (this._settleOwed = this._settleOwed ?? {});
       if (owed.notifying) return; // an active settlement owns notification and publication
+      owner = true;
       if (!owed.extensionsNotified) {
         owed.extensionsNotified = true;
         owed.notifying = true;
-        await this._notify("agent_settled", () => this._extensionRunner.emit({ type: "agent_settled" }));
-        owed.notifying = false;
+        // Pi 0.87 defers prompts submitted from settled handlers until publication ends.
+        this._isEmittingAgentSettled = true;
+        try {
+          await this._notify("agent_settled", () => this._extensionRunner.emit({ type: "agent_settled" }));
+        } finally {
+          this._isEmittingAgentSettled = false;
+          owed.notifying = false;
+        }
       }
       if (this.isStreaming || this.isCompacting) return; // readiness, after asynchronous handlers
       this._settleOwed = undefined;
-      await this._notify("agent_settled", () => this._emit({ type: "agent_settled" }));
+      this._cacheWarmer?.onAgentSettled();
+      this._isEmittingAgentSettled = true;
+      try {
+        await this._notify("agent_settled", () => this._emit({ type: "agent_settled" }));
+      } finally {
+        this._isEmittingAgentSettled = false;
+      }
     } finally {
-      this._resolveIdleWaitIfIdle();
+      try {
+        // Only the owning settlement drains deferred actions, after both events.
+        if (owner) for (const action of this._deferredSettledActions?.splice(0) ?? []) await action();
+      } finally {
+        this._resolveIdleWaitIfIdle();
+      }
     }
   }
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-/** Maintained Pi 0.84.4 source patch. Adds a between-turn request and one compaction owner.
+/** Maintained Pi 0.87.1 source patch. Adds a between-turn request and one compaction owner.
  * Applies to the SDK and CLI bundle, not runtime prototypes. Remove when Pi ships this interface.
  *
- * The marker carries the patch revision: pristine 0.84.4 and prior-revision installs are both
+ * The marker carries the patch revision: pristine 0.87.1 and prior-revision installs are both
  * patched to the current revision; current-revision installs are left byte-identical. Unknown
  * versions or shapes fail before any file in a package is written.
  *
@@ -14,8 +14,9 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const MARKER = 'PI_COMPACTION_LIFECYCLE_V2';
-export const PRIOR_MARKERS = ['PI_COMPACTION_LIFECYCLE_V1'];
+export const MARKER = 'PI_COMPACTION_LIFECYCLE_V3';
+export const PRIOR_MARKERS = ['PI_COMPACTION_LIFECYCLE_V2', 'PI_COMPACTION_LIFECYCLE_V1'];
+export const SUPPORTED_PI_VERSION = '0.87.1';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const methodsSource = readFileSync(new URL('./compaction-lifecycle-methods.mjs', import.meta.url), 'utf8');
 const template = parse(methodsSource, { ecmaVersion: 'latest', sourceType: 'module' }).body[0].declaration;
@@ -37,13 +38,31 @@ function visit(node, fn) {
  */
 export function stripPriorRevision(source) {
   let out = source;
-  out = out.replace(/if \(this\._requestedCompaction\) \{ const signal = this\.agent\.signal; await this\._runRequestedCompaction\(\); this\._flushPendingCustomMessages\(\); signal\?\.throwIfAborted\(\); return \{ \.\.\.\w+, messages: this\.agent\.state\.messages\.slice\(\) \}; \}\n?/g, '');
+  out = out.replace(/if \(this\._requestedCompaction\) \{ const signal = this\.agent\.signal; await this\._runRequestedCompaction\(\); this\._flushPendingCustomMessages\(\); signal\?\.throwIfAborted\(\); return \{ \.\.\.\w+, messages: (?:this\.agent\.state\.messages\.slice\(\)|this\.sessionManager\.buildSessionProjection\(\)\.messages) \}; \}\n?/g, '');
   out = out.replace(/;this\.agent\.signal\?\.throwIfAborted\(\);/g, '');
   out = out.replace(/requestCompaction: \(options\) => this\.requestCompaction\(options\), abortCompaction: \(\) => this\.abortCompaction\(\), /g, '');
   out = out.replace(/\n?this\.requestCompactionFn = \w+\.requestCompaction; this\.abortCompactionFn = \w+\.abortCompaction;\n?/g, '');
   out = out.replace(/requestCompaction: \(options\) => \{ \w+\.assertActive\(\); \w+\.requestCompactionFn\(options\); \}, abortCompaction: \(\) => \{ \w+\.assertActive\(\); \w+\.abortCompactionFn\(\); \}, /g, '');
   for (const marker of PRIOR_MARKERS) out = out.replace(new RegExp(`\\n*// ${marker}\\n*`, 'g'), '\n');
   return out;
+}
+
+const HELPERS = ['prepareCompaction', 'estimateMessagesTokens'];
+const HELPER_CALL = new RegExp(`\\b(${HELPERS.join('|')})\\(`, 'g');
+
+/** Map each helper to the single identifier (e.g. prepareCompaction2) called within scope. */
+export function resolveHelpers(scope) {
+  const seen = Object.fromEntries(HELPERS.map(helper => [helper, new Set()]));
+  visit(scope, n => {
+    if (n.type !== 'CallExpression' || n.callee.type !== 'Identifier') return;
+    const helper = HELPERS.find(h => new RegExp(`^${h}\\d*$`).test(n.callee.name));
+    if (helper) seen[helper].add(n.callee.name);
+  });
+  return Object.fromEntries(HELPERS.map(helper => {
+    const names = [...seen[helper]];
+    if (names.length !== 1) throw new Error(`Unsupported Pi: compaction helper ${helper} changed (${names.length ? names.join(', ') : 'not called'})`);
+    return [helper, names[0]];
+  }));
 }
 
 export function patchSource(source) {
@@ -59,23 +78,22 @@ export function patchSource(source) {
     const methods = new Map(node.body.body.filter(m => m.type === 'MethodDefinition').map(m => [m.key.name, m]));
     if (methods.has('_compactBeforeNextAssistantResponse') && methods.has('compact')) {
       found = true;
-      for (const name of ['compact', '_runAutoCompaction', 'abortCompaction', 'abort', 'isCompacting', '_emitAgentSettled', '_bindExtensionCore', '_installAgentNextTurnRefresh', 'prompt']) {
+      for (const name of ['compact', '_runAutoCompaction', 'abortCompaction', 'abort', 'isCompacting', '_emitAgentSettled', '_bindExtensionCore', '_installAgentNextTurnRefresh', 'prompt', '_refreshFinalizedContext', '_resolveIdleWaitIfIdle', 'abortBranchSummary', '_flushPendingCustomMessages']) {
         if (!methods.has(name)) throw new Error(`Unsupported Pi: missing AgentSession.${name}`);
       }
-      const originalCompact = source.slice(methods.get('compact').start, methods.get('compact').end);
-      if (!upgrading) {
-        for (const helper of ['prepareCompaction', 'estimateMessagesTokens']) {
-          if (!originalCompact.includes(`${helper}(`)) throw new Error(`Unsupported Pi: compaction helper ${helper} changed`);
-        }
-      }
-      for (const [name, text] of replacements) {
+      // The injected methods call module-level helpers. esbuild may rename them in the CLI
+      // bundle (0.87.1 ships prepareCompaction2), so bind to the names this class really calls:
+      // native compact() when pristine, or any method (the prior revision's) when upgrading.
+      const helperNames = resolveHelpers(upgrading ? node.body : methods.get('compact'));
+      for (const [name, rawText] of replacements) {
+        const text = rawText.replace(HELPER_CALL, (call, helper) => `${helperNames[helper]}(`);
         const old = methods.get(name);
         if (old) edits.push({ start: old.start, end: old.end, text });
         else insert(node.body.end - 1, `\n${text}\n`);
       }
       const next = methods.get('_compactBeforeNextAssistantResponse');
       const context = next.value.params[0].name;
-      insert(next.value.body.start + 1, `\nif (this._requestedCompaction) { const signal = this.agent.signal; await this._runRequestedCompaction(); this._flushPendingCustomMessages(); signal?.throwIfAborted(); return { ...${context}, messages: this.agent.state.messages.slice() }; }\n`);
+      insert(next.value.body.start + 1, `\nif (this._requestedCompaction) { const signal = this.agent.signal; await this._runRequestedCompaction(); this._flushPendingCustomMessages(); signal?.throwIfAborted(); return { ...${context}, messages: this.sessionManager.buildSessionProjection().messages }; }\n`);
       let abortGuard = false;
       visit(methods.get('_installAgentNextTurnRefresh').value.body, n => {
         if (n.type === 'VariableDeclaration' && n.declarations.some(d => d.init?.type === 'AwaitExpression' && d.init.argument?.callee?.property?.name === '_compactBeforeNextAssistantResponse')) {
@@ -158,7 +176,7 @@ export function patchPackage(root, check = false) {
   for (const file of files) {
     const source = readFileSync(file, 'utf8');
     if (source.includes(MARKER)) continue;
-    if (manifest.version !== '0.84.4') throw new Error(`Unsupported Pi ${manifest.version}. Review the lifecycle patch before applying.`);
+    if (manifest.version !== SUPPORTED_PI_VERSION) throw new Error(`Unsupported Pi ${manifest.version}. Review the lifecycle patch before applying.`);
     pending.push({ file, source, patched: patchSource(source) });
   }
   if (check && pending.length) throw new Error(`Lifecycle patch missing or stale in ${pending.length} files in ${root}`);

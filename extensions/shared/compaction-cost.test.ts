@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { Context, Model } from "@earendil-works/pi-ai";
+import { normalizeContext, type Model } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { accumulateCost, emptyCostTotals, summarizeSessionEntries } from "./billing.ts";
 
@@ -73,7 +73,7 @@ function costTotal(message: { usage: Record<string, unknown> }): number {
 async function summarizeCall(usageJson: string): Promise<AssistantMessage> {
 	const body = sseBody(usageJson);
 	const fetchImpl = async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
-	const context: Context = { messages: [{ role: "user", content: "hi", timestamp: 1 }], tools: [] };
+	const context = normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }], tools: [] });
 	let message: AssistantMessage | undefined;
 	for await (const event of stream(model, context, { apiKey: "test", fetch: fetchImpl })) {
 		if (event.type === "done") message = event.message as unknown as AssistantMessage;
