@@ -106,13 +106,6 @@ Adds `/fast [on|off|status]` for GPT-5.6 requests through the OpenAI and OpenAI 
 
 Fast mode uses the same model with accelerated API processing and premium token pricing. OpenAI guarantees the tier on its pay-as-you-go API; the ChatGPT OAuth backend may ignore or downgrade it.
 
-### `extensions/sonnet-5-5-compat`
-
-Adds the thinking-binding controls required for direct Anthropic Claude Sonnet 5.5 requests.
-It preserves Anthropic's existing beta headers and opts into dropping a stale thinking block when
-the system prompt, tools, or conversation prefix changes between requests. The hooks are scoped to
-`anthropic/claude-sonnet-5-5` and leave every other provider and model untouched.
-
 ### `extensions/live-time`
 
 Replaces Pi's static `Working...` message during an active agent run with a live,
