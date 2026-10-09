@@ -115,8 +115,7 @@ export class SessionCompactionMethods {
           signal.throwIfAborted();
           const model = this.model;
           if (!model) throw new Error("No model selected for compaction.");
-          const auth = await this._getSummarizationRequestAuth(model, signal);
-          signal.throwIfAborted();
+          // Pi 1.x resolves summarization auth inside _runDefaultCompaction.
           const branchEntries = this.sessionManager.getBranch();
           const leaf = this.sessionManager.getLeafId();
           const preparation = prepareCompaction(branchEntries, this.settingsManager.getCompactionSettings(model));
@@ -135,7 +134,7 @@ export class SessionCompactionMethods {
           if (hook?.cancel) throw hook.error instanceof Error ? hook.error : Object.assign(new Error("Compaction cancelled"), { compactionCancelled: true });
           operation.fromExtension = !!hook?.compaction;
           const result = hook?.compaction ?? await this._runDefaultCompaction(
-            preparation, auth.model, auth.apiKey, auth.headers, customInstructions, signal, auth.env, reason,
+            preparation, model, customInstructions, signal, reason,
           );
           signal.throwIfAborted();
           // Extension state entries may be appended by the hook. Reject changes to conversation
@@ -290,11 +289,14 @@ export class SessionCompactionMethods {
       // A queued request whose run ended before the safe point settles here; it never
       // starts model work and never survives into the idle state.
       this._settleRequestedCompaction();
+      // Record whether the ended run was aborted when its settlement is first owed, so both
+      // events report the run that ended even if publication waits for a compaction.
       if (this.isCompacting) {
-        this._settleOwed = this._settleOwed ?? {};
+        this._settleOwed = this._settleOwed ?? { aborted: this._agentRunAbortRequested };
         return;
       }
-      const owed = (this._settleOwed = this._settleOwed ?? {});
+      const owed = (this._settleOwed = this._settleOwed ?? { aborted: this._agentRunAbortRequested });
+      const aborted = !!owed.aborted;
       if (owed.notifying) return; // an active settlement owns notification and publication
       owner = true;
       if (!owed.extensionsNotified) {
@@ -303,7 +305,7 @@ export class SessionCompactionMethods {
         // Pi 0.87 defers prompts submitted from settled handlers until publication ends.
         this._isEmittingAgentSettled = true;
         try {
-          await this._notify("agent_settled", () => this._extensionRunner.emit({ type: "agent_settled" }));
+          await this._notify("agent_settled", () => this._extensionRunner.emit({ type: "agent_settled", aborted }));
         } finally {
           this._isEmittingAgentSettled = false;
           owed.notifying = false;
@@ -314,7 +316,7 @@ export class SessionCompactionMethods {
       this._cacheWarmer?.onAgentSettled();
       this._isEmittingAgentSettled = true;
       try {
-        await this._notify("agent_settled", () => this._emit({ type: "agent_settled" }));
+        await this._notify("agent_settled", () => this._emit({ type: "agent_settled", aborted }));
       } finally {
         this._isEmittingAgentSettled = false;
       }

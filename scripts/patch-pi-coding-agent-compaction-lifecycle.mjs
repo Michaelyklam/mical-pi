@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-/** Maintained Pi 0.87.1 source patch. Adds a between-turn request and one compaction owner.
+/** Maintained Pi 1.1.0 source patch. Adds a between-turn request and one compaction owner.
  * Applies to the SDK and CLI bundle, not runtime prototypes. Remove when Pi ships this interface.
  *
- * The marker carries the patch revision: pristine 0.87.1 and prior-revision installs are both
+ * The marker carries the patch revision: pristine 1.1.0 and prior-revision installs are both
  * patched to the current revision; current-revision installs are left byte-identical. Unknown
  * versions or shapes fail before any file in a package is written.
  *
@@ -14,9 +14,10 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const MARKER = 'PI_COMPACTION_LIFECYCLE_V3';
-export const PRIOR_MARKERS = ['PI_COMPACTION_LIFECYCLE_V2', 'PI_COMPACTION_LIFECYCLE_V1'];
-export const SUPPORTED_PI_VERSION = '0.87.1';
+// V4: Pi 1.1.0 port (new _runDefaultCompaction signature, agent_settled `aborted`).
+export const MARKER = 'PI_COMPACTION_LIFECYCLE_V4';
+export const PRIOR_MARKERS = ['PI_COMPACTION_LIFECYCLE_V3', 'PI_COMPACTION_LIFECYCLE_V2', 'PI_COMPACTION_LIFECYCLE_V1'];
+export const SUPPORTED_PI_VERSION = '1.1.0';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const methodsSource = readFileSync(new URL('./compaction-lifecycle-methods.mjs', import.meta.url), 'utf8');
 const template = parse(methodsSource, { ecmaVersion: 'latest', sourceType: 'module' }).body[0].declaration;

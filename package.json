@@ -25,7 +25,7 @@
     "typescript": "^5.6.3"
   },
   "scripts": {
-    "postinstall": "node scripts/patch-pi-ai-claude-code-version.mjs && node scripts/patch-pi-ai-openrouter-cost.mjs && node scripts/patch-pi-coding-agent-compaction-cost.mjs && node scripts/patch-pi-coding-agent-compaction-lifecycle.mjs",
+    "postinstall": "node scripts/patch-pi-ai-openrouter-cost.mjs && node scripts/patch-pi-coding-agent-compaction-cost.mjs && node scripts/patch-pi-coding-agent-compaction-lifecycle.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "update:browser": "./scripts/update-agent-browser.sh",
     "check:browser": "./scripts/update-agent-browser.sh --check",

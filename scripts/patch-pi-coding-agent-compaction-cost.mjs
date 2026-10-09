@@ -91,7 +91,8 @@ function walk(dir, out, depth) {
 			entry.isFile() &&
 			entry.name.endsWith(".js") &&
 			!entry.name.endsWith(".lazy.js") &&
-			(entry.name === "compaction.js" || entry.name.startsWith("chunk-"))
+			// Pi 1.x moved combineUsage from compaction.js into usage-totals.js.
+			(entry.name === "compaction.js" || entry.name === "usage-totals.js" || entry.name.startsWith("chunk-"))
 		) {
 			out.add(path);
 		}
@@ -128,8 +129,9 @@ function packageVersionFor(file) {
 }
 
 /**
- * A file is relevant when it merges usages, or when this patch has already run
- * on it. Staleness is decided by a remaining anchor, not by the marker alone, so
+ * A file is relevant when it defines combineUsage, or when this patch has
+ * already run on it. Files that only call combineUsage are skipped.
+ * Staleness is decided by a remaining anchor, not by the marker alone, so
  * a bundle with two `combineUsage` copies where only one was patched is still
  * reported stale.
  */
@@ -145,7 +147,7 @@ export function classify(source) {
 }
 
 function isRelevant(source) {
-	return source.includes("combineUsage") || source.includes(MARKER);
+	return /function combineUsage\s*\(/.test(source) || source.includes(MARKER);
 }
 
 function isRepoLocal(file) {

@@ -30,6 +30,10 @@ const piAiModule = fileURLToPath(
 const compactionModule = fileURLToPath(
 	new URL("../../node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js", import.meta.url),
 );
+// Pi 1.x defines combineUsage here; compaction.js imports it.
+const usageTotalsModule = fileURLToPath(
+	new URL("../../node_modules/@earendil-works/pi-coding-agent/dist/core/usage-totals.js", import.meta.url),
+);
 const { compact } = (await import(compactionModule)) as {
 	compact: (preparation: unknown, model: unknown, ...rest: unknown[]) => Promise<{ usage: Record<string, unknown> }>;
 };
@@ -121,7 +125,7 @@ function compactionEntry(usage: unknown) {
 }
 
 test("patched combineUsage keeps both summarized calls on billingComponents", async () => {
-	for (const file of [piAiModule, compactionModule]) {
+	for (const file of [piAiModule, usageTotalsModule]) {
 		const marker = file === piAiModule ? PI_AI_MARKER : COMPACTION_MARKER;
 		assert.ok(readFileSync(file, "utf8").includes(marker), `${file} is not patched; run: npm run postinstall`);
 	}
