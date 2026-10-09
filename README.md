@@ -49,26 +49,6 @@ Adds `/effort`, an interactive picker for the reasoning levels supported by the 
 The picker uses Pi's model metadata, so unsupported levels stay hidden. Select a level in the
 picker, or set one directly with `/effort high`.
 
-### `extensions/mcp-health`
-
-Replaces the persistent MCP footer entry with a silent-until-broken one. Shows nothing while
-servers are healthy; when one is not, names it: `MCP: hex failed 12s ago`, `MCP: hex needs auth`.
-
-Reads `pi-mcp-adapter`'s snapshot off pi's shared event bus
-(`pi-mcp-adapter/status/v1`) and renders under its own `mcp-health` footer key. Requires
-`settings.mcpFooterStatus: "off"` in the MCP config so the adapter's own footer does not render
-alongside it; the adapter publishes its snapshot before honouring that setting, so turning the
-footer off does not suppress the events this depends on.
-
-**`cached` and `not-connected` count as healthy.** The adapter connects lazily, so a configured
-server sits at `cached` (metadata cached, dials on first tool call) until it is actually used.
-Treating "not currently connected" as a fault would leave the footer visible permanently, which
-is the opposite of the point. Only `failed` and `needs-auth` are faults.
-
-Unhealthy is matched as "not in the known-healthy set" rather than as a list of failure states,
-so if the adapter renames or adds a failure status it surfaces in the footer as an unfamiliar
-word instead of the indicator silently going quiet.
-
 ### `extensions/session-aliases`
 
 Adds `/clear` as an alias for pi's built-in `/new` command. It uses
@@ -170,7 +150,7 @@ Design and behavior are documented in [`CONTEXT.md`](CONTEXT.md),
 ### `extensions/firecrawl-web`
 
 Gives pi web access, which it otherwise has none of: the built-ins are only
-`read`/`bash`/`edit`/`write`/`grep`/`find`/`ls`, and pi has no MCP client, so this is a
+`read`/`bash`/`edit`/`write`/`grep`/`find`/`ls`, so this is a
 plain custom tool pair backed by [Firecrawl](https://firecrawl.dev):
 
 | Tool | Endpoint | Use |
