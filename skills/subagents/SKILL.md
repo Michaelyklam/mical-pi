@@ -1,63 +1,25 @@
 ---
 name: subagents
-description: Read before spawning subagents or selecting models for an explicitly requested workflow.
+description: Read before delegating assignments to subagents or composing an explicitly requested workflow.
 ---
 
 # Subagents
 
 Each subagent is headless, has its own context window, cannot see the parent conversation, cannot ask the user, and cannot spawn subagents or workflows. Give every child a self-contained prompt with paths, constraints, and the expected report.
 
-## Model and provider selection
+## Runtime defaults and explicit selections
 
-For delegated coding, testing, debugging, review, code research and internet research, use MiMo V2.6 Pro via `harness: "pi"`, `model: "openrouter/xiaomi/mimo-v2.6-pro"`, and `reasoning_effort: "max"`. For explicitly requested workflows, use provider `openrouter`, model `xiaomi/mimo-v2.6-pro`, and `effort: "max"`. Use Astra for 3D modelling assignments. Split mixed work only when the assignments are independently useful; otherwise use Astra for the assignment containing 3D modelling. An explicit model or harness request takes precedence.
+Omit `harness`, `model`, and `reasoning_effort` unless the user explicitly selects them. The runtime reads local per-harness defaults; without config, the harness is Pi, Pi inherits the parent's model and effort, and Claude Code/Codex use native defaults. Pass each user-selected field as an explicit tool argument. Fields override config independently.
 
-Prefer `pi` and pass the selected model explicitly. Resolve exact model IDs from the configured model catalog rather than guessing aliases. This policy authorizes the model choices above across configured providers. If several provider routes exist without an established preference, ask which to use. If the selected model is unavailable or a host provider restriction blocks it, report that and ask before substituting or setting up another route.
+Workflow `agent()` calls use the same Pi defaults. Omit `model`, `provider`, and `effort` when the user has no selection. An explicit `provider` requires an explicit `model`; an explicit model route replaces the configured route while an omitted effort still uses the configured effort.
 
-For other assignments, inherit the parent's exact provider and model unless the operator requests otherwise. Claude Code uses `anthropic`; Codex CLI uses `openai-codex`. Treat custom providers and gateways as distinct provider IDs, even when they serve the same model family. These are instruction defaults, not runtime routing rules.
+For explicit Pi selections, resolve exact IDs from the model catalog. A bare ID uses the parent provider for subagents; `provider/model-id` selects an exact route. Report an unavailable selection before substituting a model or configuring another provider. When setting up or troubleshooting local defaults, read `../../docs/subagent-defaults.md` for the config shape, precedence, and errors.
 
-## Pi Harness
+Available harnesses are `pi`, `claude` (Claude Code, also "cc"), and `codex` (Codex CLI). Claude Code and Codex require their CLI to be installed and authenticated. Reasoning efforts are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; each harness maps them to its supported native equivalent.
 
-**Harness:** `pi`
-**Prompt nicknames:** “pi”, “pi agent”, “pi subagent”
-**Model:** Follow Model and provider selection above. Omitting `model` inherits the parent model; it does not select the coding default. Pass `reasoning_effort: "max"` for default MiMo coding and research assignments. For other assignments, omit `reasoning_effort` to inherit the parent's thinking level unless another effort is requested.
+## Spawn and manage
 
-A bare model ID resolves within the parent provider. Use the exact `provider/model-id` for an authorized cross-provider route.
-
-**Thinking budgets:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. These map directly to pi thinking levels.
-
-## Claude Code Harness
-
-**Harness:** `claude`
-**Prompt nicknames:** “claude”, “Claude Code”, “claude agent”, “claude subagent”, "cc"
-**Best default:** use the latest fable model on high reasoning. Do not default to anything else, if the user does not specify, use fable.
-
-| Model hint | Model               | Recommended effort |
-| ---------- | ------------------- | ------------------ |
-| `fable`    | latest Claude Fable | `high`             |
-
-**Thinking budgets:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The extension maps these to Claude thinking-token budgets: 0, 1,024, 4,096, 10,000, 16,000, 32,000, and 63,999 tokens respectively.
-
-Requires Claude Code to be installed and authenticated.
-
-## Codex Harness
-
-**Harness:** `codex`
-**Prompt nicknames:** “codex”, “Codex CLI”, “codex agent”, “codex subagent”
-**Best default:** `gpt-5.6-sol` with `high` effort for coding work. Do not use anything other than sol unless the user specifically asks for it.
-
-| Model           | Recommended effort |
-| --------------- | ------------------ |
-| `gpt-5.6-sol`   | `high`             |
-| `gpt-5.6-terra` | `high`             |
-| `gpt-5.6-luna`  | `high`             |
-
-**Thinking budgets accepted by the extension:** `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Codex maps these to the nearest effort supported by the selected model; `off`/`minimal` become `minimal`, while `max` becomes the highest extension-supported Codex effort.
-
-Requires the Codex CLI to be installed and authenticated.
-
-## Spawn and Manage
-
-Call `subagent_spawn` with a complete `prompt`, short `name`, chosen `harness`, and optional `working_dir`, `model`, and `reasoning_effort`. At most 16 subagents run concurrently.
+Call `subagent_spawn` with a complete `prompt`, short `name`, and optional `harness`, `working_dir`, `model`, and `reasoning_effort`. At most 16 subagents run concurrently.
 
 - `subagent_check({ id })`: peek without blocking.
 - `subagent_compact({ id })`: manual recovery for a settled Pi child when its own context management is unavailable or insufficient, or when the user requests it. It runs only above 40,000 tokens; lower usage is skipped. Claude Code and Codex return an unsupported-backend error.

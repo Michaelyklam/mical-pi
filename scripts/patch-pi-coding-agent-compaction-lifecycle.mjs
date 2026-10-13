@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-/** Maintained Pi 1.1.0 source patch. Adds a between-turn request and one compaction owner.
+/** Maintained Pi 1.x source patch. Adds a between-turn request and one compaction owner.
  * Applies to the SDK and CLI bundle, not runtime prototypes. Remove when Pi ships this interface.
+ * Supports the versions in SUPPORTED_PI_VERSIONS; SUPPORTED_PI_VERSION is the pinned dev copy.
  *
- * The marker carries the patch revision: pristine 1.1.0 and prior-revision installs are both
+ * The marker carries the patch revision: pristine reviewed versions and prior-revision installs are both
  * patched to the current revision; current-revision installs are left byte-identical. Unknown
  * versions or shapes fail before any file in a package is written.
  *
@@ -15,9 +16,14 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // V4: Pi 1.1.0 port (new _runDefaultCompaction signature, agent_settled `aborted`).
-export const MARKER = 'PI_COMPACTION_LIFECYCLE_V4';
-export const PRIOR_MARKERS = ['PI_COMPACTION_LIFECYCLE_V3', 'PI_COMPACTION_LIFECYCLE_V2', 'PI_COMPACTION_LIFECYCLE_V1'];
-export const SUPPORTED_PI_VERSION = '1.1.0';
+// V5: Pi 1.2.0 moves run activation before _prepareRun. Its failure path must release
+// our run-end waiters and pending requests without adding a native settlement event.
+// The compaction signature and existing inline anchors remain unchanged from 1.1.0.
+export const MARKER = 'PI_COMPACTION_LIFECYCLE_V5';
+export const PRIOR_MARKERS = ['PI_COMPACTION_LIFECYCLE_V4', 'PI_COMPACTION_LIFECYCLE_V3', 'PI_COMPACTION_LIFECYCLE_V2', 'PI_COMPACTION_LIFECYCLE_V1'];
+export const SUPPORTED_PI_VERSIONS = ['1.2.0', '1.1.0'];
+/** The pinned dev copy under test; every reviewed version must still pass the shape guards. */
+export const SUPPORTED_PI_VERSION = SUPPORTED_PI_VERSIONS[0];
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const methodsSource = readFileSync(new URL('./compaction-lifecycle-methods.mjs', import.meta.url), 'utf8');
 const template = parse(methodsSource, { ecmaVersion: 'latest', sourceType: 'module' }).body[0].declaration;
@@ -41,6 +47,7 @@ export function stripPriorRevision(source) {
   let out = source;
   out = out.replace(/if \(this\._requestedCompaction\) \{ const signal = this\.agent\.signal; await this\._runRequestedCompaction\(\); this\._flushPendingCustomMessages\(\); signal\?\.throwIfAborted\(\); return \{ \.\.\.\w+, messages: (?:this\.agent\.state\.messages\.slice\(\)|this\.sessionManager\.buildSessionProjection\(\)\.messages) \}; \}\n?/g, '');
   out = out.replace(/;this\.agent\.signal\?\.throwIfAborted\(\);/g, '');
+  out = out.replace(/,this\._resolveAgentRunEnd\(\),this\._settleRequestedCompaction\(\)/g, '');
   out = out.replace(/requestCompaction: \(options\) => this\.requestCompaction\(options\), abortCompaction: \(\) => this\.abortCompaction\(\), /g, '');
   out = out.replace(/\n?this\.requestCompactionFn = \w+\.requestCompaction; this\.abortCompactionFn = \w+\.abortCompaction;\n?/g, '');
   out = out.replace(/requestCompaction: \(options\) => \{ \w+\.assertActive\(\); \w+\.requestCompactionFn\(options\); \}, abortCompaction: \(\) => \{ \w+\.assertActive\(\); \w+\.abortCompactionFn\(\); \}, /g, '');
@@ -91,6 +98,27 @@ export function patchSource(source) {
         const old = methods.get(name);
         if (old) edits.push({ start: old.start, end: old.end, text });
         else insert(node.body.end - 1, `\n${text}\n`);
+      }
+      // 1.2.0 can fail before agent.prompt exists. Preserve its native no-event failure
+      // behavior, but release callers waiting for that starting run to end.
+      const startRun = methods.get('_startRun');
+      if (startRun) {
+        let released = false;
+        visit(startRun.value.body, n => {
+          if (n.type !== 'CatchClause') return;
+          visit(n.body, child => {
+            if (child.type === 'AssignmentExpression' && child.operator === '=' &&
+                child.left.type === 'MemberExpression' && child.left.object.type === 'ThisExpression' &&
+                child.left.property.name === '_isAgentRunActive' &&
+                (child.right.type === 'Literal' && child.right.value === false ||
+                 child.right.type === 'UnaryExpression' && child.right.operator === '!' && child.right.argument.value === 1)) {
+              // Also works in esbuild's throw/sequence expression (!1 instead of false).
+              insert(child.end, ',this._resolveAgentRunEnd(),this._settleRequestedCompaction()');
+              released = true;
+            }
+          });
+        });
+        if (!released) throw new Error('Unsupported Pi: starting-run failure cleanup changed');
       }
       const next = methods.get('_compactBeforeNextAssistantResponse');
       const context = next.value.params[0].name;
@@ -172,12 +200,12 @@ function sources(root) {
 
 export function patchPackage(root, check = false) {
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  if (!SUPPORTED_PI_VERSIONS.includes(manifest.version)) throw new Error(`Unsupported Pi ${manifest.version}. Reviewed versions: ${SUPPORTED_PI_VERSIONS.join(', ')}. Review the lifecycle patch before applying.`);
   const files = sources(root);
   const pending = [];
   for (const file of files) {
     const source = readFileSync(file, 'utf8');
     if (source.includes(MARKER)) continue;
-    if (manifest.version !== SUPPORTED_PI_VERSION) throw new Error(`Unsupported Pi ${manifest.version}. Review the lifecycle patch before applying.`);
     pending.push({ file, source, patched: patchSource(source) });
   }
   if (check && pending.length) throw new Error(`Lifecycle patch missing or stale in ${pending.length} files in ${root}`);

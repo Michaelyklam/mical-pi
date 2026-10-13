@@ -241,17 +241,19 @@ parent model's context. If `/btw` is opened while the parent is streaming, the s
 only messages persisted when the command starts.
 
 The companion skill teaches the model when and how to delegate, including the requirement that
-each child receive a self-contained prompt. Provider selection follows the
-[subagents skill](skills/subagents/SKILL.md), rather than runtime provider restrictions.
-Pi children inherit the parent model by default and accept explicit `provider/model-id` hints.
-Claude and Codex children require their respective CLI/SDK authentication.
+each child receive a self-contained prompt. Runtime defaults come from optional
+`<agent-dir>/subagents.json`; explicit tool arguments override each field independently.
+Without config, Pi children inherit the parent model and effort, while Claude and Codex use
+native defaults and require their respective CLI/SDK authentication. Workflow agents share
+Pi's configured defaults; `/btw` keeps parent inheritance. See
+[Subagent defaults](docs/subagent-defaults.md) for the config shape, precedence, and updates.
 
 Vendored from
 [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup/tree/2657bae/extensions/subagents)
 at upstream commit `2657bae`, together with its `tool-call-timeout` helper and runtime dependencies.
 The matching
 [subagents skill](https://github.com/davis7dotsh/my-pi-setup/tree/2657bae/skills/subagents)
-is included unchanged.
+is adapted for runtime configuration and local delegation procedures.
 
 ### `extensions/self-compact`
 
@@ -287,7 +289,7 @@ cancels an attempt. `/self-compact-info` and `view_context` show state, errors, 
 deadline without a model turn. The default total deadline is five minutes, including summary
 retries; change it with `--compact-timeout-ms 300000`.
 
-**Requires a Pi restart after installation.** `npm install` applies the maintained Pi 0.84.4
+**Requires a Pi restart after installation.** `npm install` applies the maintained Pi 1.1.0/1.2.0
 lifecycle patch to the local SDK and global CLI, including its bundle. It adds the between-turn
 request API and one compaction owner shared by manual, native and self-compaction. Equivalent
 manual calls share an operation; conflicting requests fail busy. The session releases each request
@@ -302,7 +304,10 @@ upgrades previously patched copies without replacing unrelated dependency patche
 `node scripts/patch-pi-coding-agent-compaction-lifecycle.mjs --check`
 to verify installation. Unsupported Pi versions fail the patch rather than guessing. Without the
 API, self-compaction fails clearly before saving a note; ordinary tools and native compaction
-remain available. `/reload` alone cannot replace an already-loaded Pi core.
+remain available. `/reload` alone cannot replace an already-loaded Pi core. The dev dependencies
+are pinned to 1.2.0 to match the current CLI. The V5 patch also releases pending requests and
+run-end waiters when 1.2.0's newly active run fails during preparation, while preserving native
+no-settlement-event behavior for that failure. See [compatibility review](docs/pi-lifecycle-compatibility.md).
 
 The TUI footer bar is off by default, because this package also ships `extensions/usage-footer`,
 which owns the footer. Pass `--compact-footer` to replace it with the self-compact context bar for a

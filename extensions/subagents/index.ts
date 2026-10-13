@@ -46,6 +46,7 @@ import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { combineSubagentCosts } from "./src/billing.ts";
 import { SUBAGENT_COST_EVENT } from "../shared/billing.ts";
+import { spawnConfiguredSubagent } from "./src/spawn.ts";
 import {
   cloneBtwParentMessages,
   deriveBtwTitle,
@@ -311,9 +312,11 @@ export default function (pi: ExtensionAPI) {
       name: Type.String({
         description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.name,
       }),
-      harness: StringEnum(BACKEND_NAMES, {
-        description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.harness,
-      }),
+      harness: Type.Optional(
+        StringEnum(BACKEND_NAMES, {
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.harness,
+        }),
+      ),
       working_dir: Type.Optional(
         Type.String({
           description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.workingDir,
@@ -332,17 +335,15 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const manager = await getManager();
-      const harness = params.harness;
-
       const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
       if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
         throw new Error(`working_dir is not a directory: ${cwd}`);
       }
 
       const title = params.name.trim().slice(0, 160) || "subagent";
-      const snap = await runTool(
-        getRuntime(),
-        manager.spawn(harness, {
+      const { harness, effect } = spawnConfiguredSubagent(
+        manager,
+        {
           prompt: params.prompt,
           title,
           cwd,
@@ -361,7 +362,12 @@ export default function (pi: ExtensionAPI) {
             inheritedThinkingLevel: pi.getThinkingLevel(),
             modelRegistry: ctx.modelRegistry,
           },
-        }),
+        },
+        params.harness,
+      );
+      const snap = await runTool(
+        getRuntime(),
+        effect,
         { signal, interruptMessage: "Subagent spawn aborted." },
       );
 

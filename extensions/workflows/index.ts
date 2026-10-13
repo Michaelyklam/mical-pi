@@ -38,6 +38,7 @@ import { formatActivityStatus } from "../shared/activity-status.ts";
 import { WORKFLOW_COST_EVENT } from "../shared/billing.ts";
 import { createWorkflowPersistence, persistWorkflowJson } from "./artifacts.ts";
 import { RunController } from "./controller.ts";
+import { resolveWorkflowDefaults } from "./defaults.ts";
 import { sessionWorkflowRunIds, showWorkflowDashboard } from "./dashboard.ts";
 import {
   extractMeta,
@@ -74,24 +75,12 @@ import {
 import {
   createWorkflowResources,
   runAgent,
-  type ThinkingLevel,
-  type WorkflowModel,
 } from "./runner.ts";
 import { runWorkflowSandbox } from "./sandbox.ts";
 import { safeStringify, writeFileAtomic } from "./serialization.ts";
 
 const PREVIEW_LENGTH = 200;
 const EMIT_INTERVAL_MS = 120;
-
-const THINKING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
 
 /** What `agent()` resolves to inside the script. */
 interface ScriptAgentResult {
@@ -546,57 +535,16 @@ export default function workflows(pi: ExtensionAPI) {
 
         return controller
           .schedule((runSignal) => withActiveAgent(async () => {
-            // Model/provider resolution: default to the parent session's model.
-            let model: WorkflowModel | undefined = ctx.model;
-            if (opts.model !== undefined || opts.provider !== undefined) {
-              const modelOpt =
-                typeof opts.model === "string" ? opts.model : undefined;
-              const providerOpt =
-                typeof opts.provider === "string" ? opts.provider : undefined;
-              if (!modelOpt)
-                return fail(
-                  `agent "${label}": \`provider\` requires \`model\` as well`,
-                );
-              let resolved: WorkflowModel | undefined;
-              if (providerOpt) {
-                resolved = ctx.modelRegistry.find(providerOpt, modelOpt);
-              } else {
-                const slash = modelOpt.indexOf("/");
-                if (slash > 0) {
-                  resolved = ctx.modelRegistry.find(
-                    modelOpt.slice(0, slash),
-                    modelOpt.slice(slash + 1),
-                  );
-                }
-                resolved ??= ctx.modelRegistry
-                  .getAll()
-                  .find((m) => m.id === modelOpt);
-              }
-              if (!resolved) {
-                const requested = providerOpt
-                  ? `${providerOpt}/${modelOpt}`
-                  : modelOpt;
-                return fail(
-                  `agent "${label}": unknown model "${requested}" (use provider/id)`,
-                );
-              }
-              model = resolved;
+            let resolved: ReturnType<typeof resolveWorkflowDefaults>;
+            try {
+              resolved = resolveWorkflowDefaults(opts, ctx.model, pi.getThinkingLevel(), ctx.modelRegistry);
+            } catch (error) {
+              return fail(`agent "${label}": ${error instanceof Error ? error.message : String(error)}`);
             }
+            const { model, thinkingLevel } = resolved;
             record.model = model?.id;
             record.contextWindow = model?.contextWindow;
             emit();
-
-            // Effort → thinking level; default inherits the parent session.
-            let thinkingLevel: ThinkingLevel = pi.getThinkingLevel();
-            if (opts.effort !== undefined) {
-              const effort = String(opts.effort);
-              if (!(THINKING_LEVELS as readonly string[]).includes(effort)) {
-                return fail(
-                  `agent "${label}": invalid effort "${effort}" (use ${THINKING_LEVELS.join("|")})`,
-                );
-              }
-              thinkingLevel = effort as ThinkingLevel;
-            }
 
             const resources = await getResources(opts.schema !== undefined);
             const outcome = await runAgent({

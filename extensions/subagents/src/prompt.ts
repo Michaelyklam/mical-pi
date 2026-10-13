@@ -11,7 +11,7 @@ export const SUBAGENT_SPAWN_PROMPT_SNIPPET =
 /** Guides the parent model to delegate standalone tasks and avoid unnecessary blocking waits. */
 export const SUBAGENT_SPAWN_PROMPT_GUIDELINES = [
   "Use subagent_spawn to delegate self-contained tasks that can run in the background; give it a complete, standalone prompt.",
-  "Read the subagents skill before using subagent_spawn for provider selection and harness defaults.",
+  "Omit harness, model, and reasoning_effort to use runtime-configured defaults. Pass any harness/model/effort explicitly requested by the user as tool arguments; explicit fields override config independently. Read the subagents skill for operational delegation guidance, not model selection.",
   "After subagent_spawn, continue only independent parent work; leave the assigned investigation and implementation to the worker. Results arrive automatically. If nothing independent remains, give a pending-work update and end the turn without claiming completion; resume when the result arrives. Reserve subagent_wait for an explicit user request for a blocking wait.",
   "Use subagent_check when progress information would change your next action, not for routine polling. Review the actual patch, then consolidate corrections through subagent_send to the same worker.",
   "Leave settled subagents unmodified unless you need them again. Send follow-up work directly with subagent_send; Pi children with self-compaction enabled manage their own context. Reserve subagent_compact for manual recovery when that context management is unavailable or insufficient, or when the user requests it. Claude Code and Codex subagents cannot be compacted through this tool.",
@@ -23,13 +23,13 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
     "Task prompt for the subagent. Must be self-contained: include all needed context, file paths, and what to report back.",
   name: "Short human-readable name for this subagent, shown in listings and the UI",
   harness:
-    'Harness to run the subagent on: "pi", "claude" (Claude Code), or "codex" (Codex CLI).',
+    'Harness: "pi", "claude" (Claude Code), or "codex" (Codex CLI). Omit for the configured default harness, otherwise pi. Pass explicit user selections.',
   workingDir:
     "Trusted working directory for the autonomous child (default: current working directory)",
   model:
-    'Model hint interpreted by the chosen harness. Pi accepts provider/model-id or a bare ID within the parent provider; omit to inherit the current model. Claude and Codex use native aliases/slugs.',
+    'Model hint interpreted by the chosen harness. Pi accepts provider/model-id or a bare ID within the parent provider; Claude and Codex use native aliases/slugs. Omit for the configured per-harness model, otherwise Pi inherits and Claude/Codex use native defaults. Explicit user selections override config.',
   reasoningEffort:
-    "Reasoning effort on a shared scale; the harness maps it to its nearest native equivalent (pi thinking level, codex reasoning effort, claude thinking budget). Omit for the harness default (pi inherits the current level).",
+    "Reasoning effort on a shared scale; the harness maps it to its nearest native equivalent. Omit for the configured per-harness effort, otherwise Pi inherits and Claude/Codex use native defaults. Explicit user selections override config.",
 };
 
 /** Builds the subagent_spawn result that tells the parent model how to continue or inspect the child. */

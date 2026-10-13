@@ -65,14 +65,14 @@ export function resolvePiModel(
   hint: string | undefined,
   inherited: { provider: string; id: string } | undefined,
 ): Model<any> {
-  if (!inherited) {
+  if (!inherited && !(hint && hint.indexOf("/") > 0)) {
     throw new Error(
       "Pi subagents require an active parent model to resolve inherited defaults.",
     );
   }
 
-  let provider = inherited.provider;
-  let id = hint ?? inherited.id;
+  let provider = inherited?.provider ?? "";
+  let id = hint ?? inherited!.id;
   const slash = id.indexOf("/");
   if (slash > 0) {
     provider = id.slice(0, slash);

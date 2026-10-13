@@ -4,10 +4,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { SessionManager } from '@earendil-works/pi-coding-agent';
-import { patchSource, patchPackage, installRoots, MARKER, PRIOR_MARKERS, SUPPORTED_PI_VERSION } from './patch-pi-coding-agent-compaction-lifecycle.mjs';
+import { patchSource, patchPackage, installRoots, MARKER, PRIOR_MARKERS, SUPPORTED_PI_VERSION, SUPPORTED_PI_VERSIONS } from './patch-pi-coding-agent-compaction-lifecycle.mjs';
 
-const dist = dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent')));
+// A pristine prior-version package can run the same behavioral suite without replacing
+// the pinned installation. Its dependencies must be installed or linked by the caller.
+const dist = process.env.PI_LIFECYCLE_TEST_ROOT
+  ? join(resolve(process.env.PI_LIFECYCLE_TEST_ROOT), 'dist')
+  : dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent')));
+const { SessionManager } = await import(pathToFileURL(join(dist, 'index.js')).href);
 const original = readFileSync(join(dist, 'core/agent-session.js'), 'utf8');
 const patched = patchSource(original);
 const fixture = join(dist, `core/.compaction-lifecycle-test-${process.pid}.mjs`);
@@ -48,7 +52,8 @@ function session() {
 
 test('the dev copy under test is the Pi version the patch supports', () => {
   const manifest = JSON.parse(readFileSync(join(dist, '../package.json'), 'utf8'));
-  assert.equal(manifest.version, SUPPORTED_PI_VERSION, 'bump the pinned devDependency and re-port the patch together');
+  if (process.env.PI_LIFECYCLE_TEST_ROOT) assert.ok(SUPPORTED_PI_VERSIONS.includes(manifest.version));
+  else assert.equal(manifest.version, SUPPORTED_PI_VERSION, 'bump the pinned devDependency and re-port the patch together');
 });
 
 test('manual compaction during an active run neither waits on itself nor strands idle waiters', async () => {
@@ -96,6 +101,33 @@ test('actions deferred by settled handlers run once, after public settlement, an
   assert.equal(s._isEmittingAgentSettled, false);
   assert.equal(warmed, 1);
   assert.equal(events.filter(e => e.type === 'agent_settled').length, 1);
+});
+
+test('starting-run preparation failure releases manual compaction waiters and pending requests without false settlement', async (t) => {
+  if (!AgentSession.prototype._startRun) {
+    t.skip('1.1.0 activates only after preparation');
+    return;
+  }
+  const { s, events } = session();
+  const started = deferred(), fail = deferred();
+  s._flushPendingBashMessages = () => {};
+  s._prepareRun = async () => { started.resolve(); await fail.promise; throw new Error('Preparation failed'); };
+  const run = s._startRun({ messageType: 'user', prompt: 'task' });
+  const rejection = assert.rejects(run, /Preparation failed/);
+  await started.promise;
+  let requestError;
+  s.requestCompaction({ onError: error => requestError = error.message });
+  // Manual operation conflicts with the queued request, so test its abort waiter directly.
+  const waiting = s.abort(true);
+  fail.resolve();
+  await rejection;
+  await Promise.race([waiting, new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error('Run-end waiter stranded')), 1000);
+    timer.unref();
+  })]);
+  assert.match(requestError, /run ended before compaction/i);
+  assert.equal(s.isCompacting, false);
+  assert.equal(events.filter(e => e.type === 'agent_settled').length, 0);
 });
 
 test('source patch parses and is idempotent; unknown source fails', () => {
@@ -425,6 +457,9 @@ test('unknown versions and shapes fail clearly without partially rewriting a pac
     writeFileSync(join(root, 'dist/core/agent-session.js'), 'export class AgentSession {}');
     writeFileSync(join(root, 'dist/core/extensions/runner.js'), 'export class ExtensionRunner {}');
     assert.throws(() => patchPackage(root), /Unsupported Pi 0\.9\.9/);
+    writeFileSync(join(root, 'dist/core/agent-session.js'), `export class AgentSession {}\n// ${MARKER}\n`);
+    writeFileSync(join(root, 'dist/core/extensions/runner.js'), `export class ExtensionRunner {}\n// ${MARKER}\n`);
+    assert.throws(() => patchPackage(root, true), /Unsupported Pi 0\.9\.9/, 'a copied marker cannot authorize an unknown version');
 
     writeFileSync(join(root, 'package.json'), JSON.stringify({ version: SUPPORTED_PI_VERSION }));
     const good = readFileSync(join(dist, 'core/agent-session.js'), 'utf8');
